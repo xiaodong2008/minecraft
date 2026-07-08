@@ -290,6 +290,79 @@ async function main(): Promise<void> {
   await page.keyboard.press('KeyE');
   await sleep(250);
 
+  // --- Drag painting: left-drag splits evenly, right-drag sprinkles one each
+  await page.keyboard.press('KeyE'); // reopen inventory
+  await sleep(300);
+  const dragSlots = await page.$$('#screen .gui-slot');
+  const centerOf = async (i: number): Promise<[number, number]> => {
+    const box = (await dragSlots[i].boundingBox())!;
+    return [box.x + box.width / 2, box.y + box.height / 2];
+  };
+  const cobbleIdx = await page.evaluate(() => {
+    const g = (window as any).game;
+    return g.session.inventory.slots.findIndex((s: any) => s && s.id === 4);
+  });
+  const cobbleCount = await page.evaluate((i: number) => {
+    const g = (window as any).game;
+    return g.session.inventory.slots[i].count;
+  }, cobbleIdx);
+  // Hotbar slot i is DOM index 36+i; main inv slot 9+j is DOM index 9+j.
+  const cobbleDom = cobbleIdx < 9 ? 36 + cobbleIdx : cobbleIdx;
+  await dragSlots[cobbleDom].click(); // pick up the whole cobble stack
+  const [ax, ay] = await centerOf(9);
+  const [bx2, by2] = await centerOf(10);
+  const [cx2, cy2] = await centerOf(11);
+  await page.mouse.move(ax, ay);
+  await page.mouse.down();
+  await page.mouse.move(bx2, by2, { steps: 4 });
+  await page.mouse.move(cx2, cy2, { steps: 4 });
+  await page.mouse.up();
+  await sleep(150);
+  const dragResult = await page.evaluate(() => {
+    const g = (window as any).game;
+    const inv = g.session.inventory;
+    const s = g.session.screens;
+    return {
+      a: inv.slots[9]?.count ?? 0,
+      b: inv.slots[10]?.count ?? 0,
+      c: inv.slots[11]?.count ?? 0,
+      cursor: s.cursor ? s.cursor.count : 0,
+    };
+  });
+  const third = Math.floor(cobbleCount / 3);
+  console.log('  left-drag split:', JSON.stringify(dragResult), `(stack ${cobbleCount})`);
+  if (dragResult.a !== third || dragResult.b !== third || dragResult.c !== third ||
+      dragResult.cursor !== cobbleCount - third * 3) {
+    errors.push(`left-drag split failed: ${JSON.stringify(dragResult)} from ${cobbleCount}`);
+  }
+  await shot('06f-drag-split');
+
+  // Right-drag: pick a split stack back up, sprinkle one into two empty slots
+  await dragSlots[9].click(); // cursor = "third" cobble
+  const [dx1, dy1] = await centerOf(12);
+  const [dx2, dy2] = await centerOf(13);
+  await page.mouse.move(dx1, dy1);
+  await page.mouse.down({ button: 'right' });
+  await page.mouse.move(dx2, dy2, { steps: 4 });
+  await page.mouse.up({ button: 'right' });
+  await sleep(150);
+  const sprinkle = await page.evaluate(() => {
+    const g = (window as any).game;
+    const inv = g.session.inventory;
+    const s = g.session.screens;
+    return {
+      d: inv.slots[12]?.count ?? 0,
+      e: inv.slots[13]?.count ?? 0,
+      cursor: s.cursor ? s.cursor.count : 0,
+    };
+  });
+  console.log('  right-drag sprinkle:', JSON.stringify(sprinkle));
+  if (sprinkle.d !== 1 || sprinkle.e !== 1 || sprinkle.cursor !== third - 2) {
+    errors.push(`right-drag sprinkle failed: ${JSON.stringify(sprinkle)}`);
+  }
+  await page.keyboard.press('KeyE');
+  await sleep(250);
+
   // Place a crafting table + furnace in front of the player programmatically,
   // then look at survival gameplay at night with mobs.
   await page.evaluate(() => {

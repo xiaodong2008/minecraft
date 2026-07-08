@@ -466,6 +466,7 @@ button { font-family: inherit; }
   cursor: pointer;
 }
 .gui-slot:hover { background: #a5a5a5; }
+.gui-slot.drag-target { background: #b8b8b8; box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.65); }
 .gui-slot canvas { width: 32px; height: 32px; image-rendering: pixelated; pointer-events: none; }
 .gui-slot .count { color: #fff; }
 

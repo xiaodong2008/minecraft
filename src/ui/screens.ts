@@ -53,6 +53,14 @@ export class Screens {
   private hovered: SlotSpec | null = null;
   private lastClickSpec: SlotSpec | null = null;
   private lastClickTime = 0;
+  /** Last stack quick-moved via shift-click (for shift+double-click bulk moves). */
+  private lastShiftMoved: ItemStack | null = null;
+
+  /**
+   * Vanilla drag-painting: press with a cursor stack and sweep over slots.
+   * Left distributes evenly on release; right sprinkles one per slot.
+   */
+  private drag: { button: 0 | 2; slots: SlotSpec[] } | null = null;
 
   constructor(icons: IconRenderer, inventory: Inventory, hooks: ScreenHooks) {
     this.icons = icons;
@@ -76,6 +84,11 @@ export class Screens {
         this.hooks.playClick();
         this.renderAll();
       }
+    });
+
+    // Drag-painting commits on release, wherever the mouse ends up.
+    document.addEventListener('mouseup', () => {
+      if (this.kind && this.drag) this.commitDrag();
     });
 
     // Keyboard slot shortcuts while a screen is open.
@@ -171,6 +184,8 @@ export class Screens {
     this.kind = null;
     this.furnace = null;
     this.hovered = null;
+    this.drag = null;
+    this.lastShiftMoved = null;
     this.root.classList.add('hidden');
     this.root.innerHTML = '';
     this.tooltip.classList.add('hidden');
@@ -407,7 +422,11 @@ export class Screens {
       e.preventDefault();
       this.hooks.playClick();
       if (e.shiftKey) {
-        this.shiftClick(spec);
+        const now = performance.now();
+        const isDouble = this.lastClickSpec === spec && now - this.lastClickTime < DOUBLE_CLICK_MS;
+        this.lastClickSpec = spec;
+        this.lastClickTime = now;
+        this.shiftClick(spec, isDouble);
       } else if (e.button === 0) {
         const now = performance.now();
         const isDouble = this.lastClickSpec === spec && now - this.lastClickTime < DOUBLE_CLICK_MS;
@@ -415,25 +434,34 @@ export class Screens {
         this.lastClickTime = now;
         if (isDouble && this.cursor && !spec.result) {
           this.gatherAll();
+        } else if (this.canDragInto(spec)) {
+          // Defer placement: this becomes a click on release, or an even
+          // split if more slots are swept before releasing.
+          this.drag = { button: 0, slots: [spec] };
         } else {
           this.leftClick(spec);
         }
       } else if (e.button === 2) {
-        this.rightClick(spec);
+        if (this.canDragInto(spec)) {
+          this.drag = { button: 2, slots: [spec] };
+        } else {
+          this.rightClick(spec);
+        }
       }
       this.renderAll();
     });
     el.addEventListener('contextmenu', (e) => e.preventDefault());
     el.addEventListener('mouseenter', (e) => {
       this.hovered = spec;
-      // Right-button drag: sprinkle one item per slot passed over.
-      if ((e.buttons & 2) !== 0 && this.cursor && !spec.result) {
-        this.rightClick(spec);
-        this.renderAll();
-      } else if ((e.buttons & 1) !== 0 && this.cursor && !spec.result) {
-        // Left-button drag: fill slots with the whole allowed amount as you sweep.
-        this.leftDragInto(spec);
-        this.renderAll();
+      // Extend an active drag-paint over newly swept slots.
+      if (this.drag && this.cursor) {
+        const buttonMask = this.drag.button === 0 ? 1 : 2;
+        if ((e.buttons & buttonMask) === 0) {
+          this.commitDrag();
+        } else if (!this.drag.slots.includes(spec) && this.canDragInto(spec)) {
+          this.drag.slots.push(spec);
+          this.renderAll();
+        }
       }
       const s = spec.get();
       if (s && !this.cursor) {
@@ -448,13 +476,60 @@ export class Screens {
     return el;
   }
 
-  /** Left-drag over an empty compatible slot: place one (classic paint-drag). */
-  private leftDragInto(spec: SlotSpec): void {
-    if (!this.cursor || spec.get() || !spec.accepts(this.cursor)) return;
-    spec.set({ ...this.cursor, count: 1 });
-    this.cursor.count--;
-    if (this.cursor.count <= 0) this.cursor = null;
-    this.recomputeCraftIfNeeded(spec);
+  /** A slot can join a drag-paint when the cursor stack could legally land there. */
+  private canDragInto(spec: SlotSpec): boolean {
+    if (!this.cursor || spec.result || !spec.accepts(this.cursor)) return false;
+    const cur = spec.get();
+    if (!cur) return true;
+    return canStack(cur, this.cursor) && cur.count < itemDef(cur.id).maxStack;
+  }
+
+  /**
+   * How a drag would distribute the cursor stack.
+   * Left: even split (floor) across slots; right: one per slot.
+   */
+  private dragShares(d: { button: 0 | 2; slots: SlotSpec[] } | null): Map<SlotSpec, number> {
+    const out = new Map<SlotSpec, number>();
+    if (!d || !this.cursor) return out;
+    const share = d.button === 0 ? Math.max(1, Math.floor(this.cursor.count / d.slots.length)) : 1;
+    const max = itemDef(this.cursor.id).maxStack;
+    let remaining = this.cursor.count;
+    for (const slot of d.slots) {
+      if (remaining <= 0) break;
+      const cur = slot.get();
+      const room = cur ? max - cur.count : max;
+      const put = Math.min(share, room, remaining);
+      if (put <= 0) continue;
+      out.set(slot, put);
+      remaining -= put;
+    }
+    return out;
+  }
+
+  private commitDrag(): void {
+    const d = this.drag;
+    this.drag = null;
+    if (!d || !this.cursor) {
+      this.renderAll();
+      return;
+    }
+    if (d.slots.length === 1) {
+      // Never left the starting slot: behave like a plain click.
+      if (d.button === 0) this.leftClick(d.slots[0]);
+      else this.rightClick(d.slots[0]);
+    } else {
+      const shares = this.dragShares(d);
+      for (const [slot, put] of shares) {
+        if (!this.cursor) break;
+        const cur = slot.get();
+        slot.set(cur ? { ...cur, count: cur.count + put } : { ...this.cursor, count: put });
+        this.cursor.count -= put;
+        if (this.cursor.count <= 0) this.cursor = null;
+        this.recomputeCraftIfNeeded(slot);
+      }
+      this.inventory.changed();
+    }
+    this.renderAll();
   }
 
   /** Double-click: gather every matching stack onto the cursor. */
@@ -563,9 +638,23 @@ export class Screens {
     }
   }
 
-  private shiftClick(spec: SlotSpec): void {
+  private shiftClick(spec: SlotSpec, doubleClick = false): void {
+    // Shift+double-click: bulk-move every stack matching the clicked item.
+    if (doubleClick) {
+      const ref = spec.get() ?? this.lastShiftMoved;
+      if (ref) {
+        for (const other of this.slots) {
+          if (other.result || other.group !== spec.group) continue;
+          const s = other.get();
+          if (s && canStack(s, ref)) this.shiftClick(other);
+        }
+        return;
+      }
+    }
+
     const inSlot = spec.get();
     if (!inSlot) return;
+    this.lastShiftMoved = { ...inSlot };
 
     if (spec.result) {
       // Craft/collect as much as possible.
@@ -659,6 +748,10 @@ export class Screens {
   // ---------------- rendering ----------------
 
   private renderAll(): void {
+    const shares = this.drag && this.drag.slots.length > 1 ? this.dragShares(this.drag) : new Map<SlotSpec, number>();
+    let ghosted = 0;
+    for (const n of shares.values()) ghosted += n;
+
     for (const spec of this.slots) {
       const el = spec.el!;
       const canvas = el.querySelector('canvas')!;
@@ -666,13 +759,23 @@ export class Screens {
       const dur = el.querySelector('.dur') as HTMLElement;
       const ctx = canvas.getContext('2d')!;
       ctx.clearRect(0, 0, 32, 32);
+
+      const share = shares.get(spec) ?? 0;
+      el.classList.toggle('drag-target', share > 0);
+
       const s = spec.get();
-      if (s) {
-        const icon = this.icons.icon(s.id);
-        if (icon) ctx.drawImage(icon, 0, 0);
-        count.textContent = s.count > 1 ? String(s.count) : '';
-        const maxDur = itemDef(s.id).tool?.durability ?? itemDef(s.id).armor?.durability ?? 0;
-        if (maxDur > 0 && (s.dur ?? 0) > 0) {
+      if (s || share > 0) {
+        const id = s ? s.id : this.cursor!.id;
+        const total = (s?.count ?? 0) + share;
+        const icon = this.icons.icon(id);
+        if (icon) {
+          if (!s && share > 0) ctx.globalAlpha = 0.7; // ghost preview
+          ctx.drawImage(icon, 0, 0);
+          ctx.globalAlpha = 1;
+        }
+        count.textContent = total > 1 ? String(total) : '';
+        const maxDur = s ? itemDef(s.id).tool?.durability ?? itemDef(s.id).armor?.durability ?? 0 : 0;
+        if (s && maxDur > 0 && (s.dur ?? 0) > 0) {
           dur.style.display = 'block';
           dur.style.setProperty('--dur', String(1 - (s.dur ?? 0) / maxDur));
         } else {
@@ -683,28 +786,29 @@ export class Screens {
         dur.style.display = 'none';
       }
     }
-    this.renderCursor();
+    this.renderCursor(ghosted);
   }
 
-  private renderCursor(): void {
+  private renderCursor(ghosted = 0): void {
     this.cursorEl.innerHTML = '';
-    if (!this.cursor) {
-      this.cursorEl.classList.add('hidden');
-      return;
+    const shown = this.cursor ? this.cursor.count - ghosted : 0;
+    if (!this.cursor || shown <= 0) {
+      this.cursorEl.classList.toggle('hidden', !this.cursor);
+      if (!this.cursor) return;
     }
     this.cursorEl.classList.remove('hidden');
     const icon = this.icons.icon(this.cursor.id);
-    if (icon) {
+    if (icon && shown > 0) {
       const img = document.createElement('canvas');
       img.width = 32;
       img.height = 32;
       img.getContext('2d')!.drawImage(icon, 0, 0);
       this.cursorEl.appendChild(img);
     }
-    if (this.cursor.count > 1) {
+    if (shown > 1) {
       const span = document.createElement('span');
       span.className = 'count';
-      span.textContent = String(this.cursor.count);
+      span.textContent = String(shown);
       this.cursorEl.appendChild(span);
     }
   }
