@@ -1,0 +1,25 @@
+{
+  "name": "webcraft",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A Minecraft-style survival game that runs entirely in the browser — crafting, mobs, hunger, XP, furnaces and more, all procedural with zero assets",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "smoke": "tsx test/smoke.ts",
+    "browsertest": "tsx test/browser.ts"
+  },
+  "dependencies": {
+    "three": "^0.182.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.182.0",
+    "puppeteer-core": "^25.3.0",
+    "tsx": "^4.20.3",
+    "typescript": "~5.9.2",
+    "vite": "^7.1.0"
+  }
+}

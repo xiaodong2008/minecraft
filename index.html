@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebCraft — survival</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='10' y='6' fill='%23795c39'/%3E%3Crect width='16' height='6' fill='%2379b944'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+
+    <div id="ui">
+      <!-- in-game HUD -->
+      <div id="hud" class="hidden">
+        <div id="crosshair"></div>
+        <div id="status-area">
+          <div id="item-name"></div>
+          <div id="status-rows">
+            <div class="status-col left">
+              <div id="armor" class="stat-row"></div>
+              <div id="hearts" class="stat-row"></div>
+            </div>
+            <div class="status-col right">
+              <div id="air" class="stat-row"></div>
+              <div id="hunger" class="stat-row"></div>
+            </div>
+          </div>
+          <div id="xp-wrap">
+            <div id="xp-level"></div>
+            <div id="xp-bar"><div id="xp-fill"></div></div>
+          </div>
+          <div id="hotbar"></div>
+        </div>
+        <div id="debug" class="hidden"></div>
+        <div id="toast"></div>
+      </div>
+
+      <div id="hurt-flash"></div>
+      <div id="vignette" class="hidden"></div>
+      <div id="fire-overlay" class="hidden"></div>
+
+      <!-- container screens (inventory / crafting / furnace / chest) -->
+      <div id="screen" class="overlay screen-overlay hidden"></div>
+      <div id="cursor-item" class="hidden"></div>
+      <div id="tooltip" class="hidden"></div>
+
+      <!-- title -->
+      <div id="menu-title" class="overlay menu dirt-bg">
+        <div class="menu-inner">
+          <div class="logo">WEBCRAFT</div>
+          <div id="splash">100% browser!</div>
+          <div class="menu-stack">
+            <button id="btn-singleplayer" class="mc-btn wide">Singleplayer</button>
+            <button class="mc-btn wide" disabled>Multiplayer</button>
+            <button id="btn-title-options" class="mc-btn wide">Options...</button>
+          </div>
+          <div class="corner-text left">WebCraft — a Minecraft-style survival game</div>
+          <div class="corner-text right">Procedural, zero assets</div>
+        </div>
+      </div>
+
+      <!-- world select -->
+      <div id="menu-worlds" class="overlay menu dirt-bg hidden">
+        <div class="menu-inner">
+          <h2 class="menu-heading">Select World</h2>
+          <div id="world-list"></div>
+          <div class="menu-row2">
+            <button id="btn-world-play" class="mc-btn half" disabled>Play Selected World</button>
+            <button id="btn-world-create" class="mc-btn half">Create New World</button>
+          </div>
+          <div class="menu-row2">
+            <button id="btn-world-delete" class="mc-btn half danger" disabled>Delete</button>
+            <button id="btn-world-back" class="mc-btn half">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- create world -->
+      <div id="menu-create" class="overlay menu dirt-bg hidden">
+        <div class="menu-inner narrow">
+          <h2 class="menu-heading">Create New World</h2>
+          <label class="mc-label" for="inp-world-name">World Name</label>
+          <input id="inp-world-name" class="mc-input" value="New World" maxlength="32" />
+          <label class="mc-label" for="inp-world-seed">Seed for the world generator</label>
+          <input id="inp-world-seed" class="mc-input" placeholder="" maxlength="32" />
+          <div id="seed-hint" class="mc-hint">Leave blank for a random seed</div>
+          <div class="mc-hint">Game Mode: Survival</div>
+          <div class="menu-stack">
+            <button id="btn-create-go" class="mc-btn wide">Create New World</button>
+            <button id="btn-create-back" class="mc-btn wide">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- options -->
+      <div id="menu-options" class="overlay menu dirt-bg hidden">
+        <div class="menu-inner narrow">
+          <h2 class="menu-heading">Options</h2>
+          <div class="opt-grid">
+            <div class="mc-slider">
+              <span id="opt-dist-label">Render Distance</span>
+              <input type="range" id="opt-dist" min="4" max="12" step="1" value="7" />
+            </div>
+            <div class="mc-slider">
+              <span id="opt-volume-label">Sound</span>
+              <input type="range" id="opt-volume" min="0" max="1" step="0.05" value="0.5" />
+            </div>
+            <div class="mc-slider">
+              <span id="opt-sens-label">Sensitivity</span>
+              <input type="range" id="opt-sens" min="0.2" max="2.5" step="0.05" value="1" />
+            </div>
+            <div class="mc-slider">
+              <span id="opt-fov-label">FOV</span>
+              <input type="range" id="opt-fov" min="60" max="110" step="1" value="75" />
+            </div>
+          </div>
+          <div class="menu-stack">
+            <button id="btn-options-done" class="mc-btn wide">Done</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- pause -->
+      <div id="menu-pause" class="overlay pause-bg hidden">
+        <div class="menu-inner">
+          <h2 class="menu-heading">Game Menu</h2>
+          <div class="menu-stack">
+            <button id="btn-resume" class="mc-btn wide">Back to Game</button>
+            <button id="btn-pause-options" class="mc-btn wide">Options...</button>
+            <button id="btn-quit" class="mc-btn wide">Save and Quit to Title</button>
+          </div>
+          <div class="controls">
+            <div><b>WASD</b> move</div><div><b>Space</b> jump</div>
+            <div><b>Double-tap W / Ctrl</b> sprint</div><div><b>Shift</b> sneak</div>
+            <div><b>Left click</b> mine / attack</div><div><b>Right click</b> place / use / eat</div>
+            <div><b>E</b> inventory</div><div><b>Q</b> drop item</div>
+            <div><b>Wheel / 1–9</b> hotbar</div><div><b>F3</b> debug</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- death -->
+      <div id="menu-death" class="overlay death-bg hidden">
+        <div class="menu-inner">
+          <h1 class="death-title">You Died!</h1>
+          <div id="death-score" class="death-score">Score: 0</div>
+          <div class="menu-stack">
+            <button id="btn-respawn" class="mc-btn wide">Respawn</button>
+            <button id="btn-death-title" class="mc-btn wide">Title Screen</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- loading -->
+      <div id="loading" class="overlay menu dirt-bg hidden">
+        <div class="menu-inner narrow center">
+          <p id="loading-text">Loading world</p>
+          <p class="mc-hint">Building terrain...</p>
+          <div class="bar"><div id="loading-bar"></div></div>
+        </div>
+      </div>
+
+      <!-- fatal error -->
+      <div id="fatal" class="overlay dirt-bg hidden">
+        <div class="menu-inner narrow center">
+          <h1 class="death-title">:(</h1>
+          <p id="fatal-text">Something went wrong.</p>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
