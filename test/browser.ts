@@ -175,6 +175,121 @@ async function main(): Promise<void> {
   await page.keyboard.press('Escape');
   await sleep(200);
 
+  // --- Regression: E while a crafting table is open must close it,
+  // not bounce into the player inventory.
+  await page.evaluate(() => {
+    const g = (window as any).game;
+    const p = g.session.player.pos;
+    g.openContainer('crafting', Math.floor(p.x) + 2, Math.floor(p.y), Math.floor(p.z));
+  });
+  await sleep(250);
+  await page.keyboard.press('KeyE');
+  await sleep(500);
+  const afterE = await page.evaluate(() => {
+    const g = (window as any).game;
+    return { kind: g.session.screens.kind, mode: g.mode };
+  });
+  console.log('  E-close:', JSON.stringify(afterE));
+  if (afterE.kind !== null || afterE.mode !== 'playing') {
+    errors.push(`E did not cleanly close crafting table: ${JSON.stringify(afterE)}`);
+  }
+
+  // --- Shift-click quick move: hotbar -> chest -> back
+  await page.evaluate(() => {
+    const g = (window as any).game;
+    const s = g.session;
+    const p = s.player.pos;
+    const cx = Math.floor(p.x) + 4, cy = Math.floor(p.y), cz = Math.floor(p.z);
+    s.world.setBlockAt(cx, cy, cz, 36, 2); // chest
+    s.world.ensureChest(cx, cy, cz);
+    g.openContainer('chest', cx, cy, cz);
+  });
+  await sleep(300);
+  // Chest screen slot order: 27 container, 27 inv, 9 hotbar.
+  let chestSlots = await page.$$('#screen .gui-slot');
+  await page.keyboard.down('Shift');
+  await chestSlots[54 + 1].click(); // hotbar slot 1 = 32 cobblestone
+  await page.keyboard.up('Shift');
+  await sleep(150);
+  const chestAfterIn = await page.evaluate(() => {
+    const g = (window as any).game;
+    const p = g.session.player.pos;
+    const chest = g.session.world.ensureChest(Math.floor(p.x) + 4, Math.floor(p.y), Math.floor(p.z));
+    return {
+      chest0: chest.slots[0] ? { ...chest.slots[0] } : null,
+      hotbar1: g.session.inventory.slots[1] ? { ...g.session.inventory.slots[1] } : null,
+    };
+  });
+  console.log('  shift-in:', JSON.stringify(chestAfterIn));
+  if (chestAfterIn.chest0?.id !== 4 || chestAfterIn.chest0.count !== 32 || chestAfterIn.hotbar1 !== null) {
+    errors.push(`shift-click into chest failed: ${JSON.stringify(chestAfterIn)}`);
+  }
+  await shot('06e-chest');
+  await page.keyboard.down('Shift');
+  await chestSlots[0].click(); // chest slot 0 back to player
+  await page.keyboard.up('Shift');
+  await sleep(150);
+  const chestAfterOut = await page.evaluate(() => {
+    const g = (window as any).game;
+    const p = g.session.player.pos;
+    const chest = g.session.world.ensureChest(Math.floor(p.x) + 4, Math.floor(p.y), Math.floor(p.z));
+    return { chest0: chest.slots[0], cobble: g.session.inventory.countOf(4) };
+  });
+  console.log('  shift-out:', JSON.stringify(chestAfterOut));
+  if (chestAfterOut.chest0 !== null || chestAfterOut.cobble !== 32) {
+    errors.push(`shift-click out of chest failed: ${JSON.stringify(chestAfterOut)}`);
+  }
+
+  // --- Double-click gather: split cobble into two stacks, double-click one
+  await page.evaluate(() => {
+    const g = (window as any).game;
+    const inv = g.session.inventory;
+    // cobble landed in main inventory (slot 9); plant a second pile
+    inv.slots[10] = { id: 4, count: 10 };
+    inv.changed();
+  });
+  chestSlots = await page.$$('#screen .gui-slot');
+  await chestSlots[27 + 0].click(); // pick up 32 cobble (inv slot 9 = first inv slot)
+  await chestSlots[27 + 0].click(); // double-click: gather the other 10
+  await sleep(150);
+  const gathered = await page.evaluate(() => {
+    const g = (window as any).game;
+    const s = g.session.screens;
+    return { cursor: s.cursor ? { ...s.cursor } : null, other: g.session.inventory.slots[10] };
+  });
+  console.log('  gather:', JSON.stringify(gathered));
+  if (gathered.cursor?.count !== 42 || gathered.other !== null) {
+    errors.push(`double-click gather failed: ${JSON.stringify(gathered)}`);
+  }
+  await page.keyboard.press('KeyE'); // close (cursor returns to inventory)
+  await sleep(250);
+
+  // --- Number-key swap: hover a slot in the inventory screen, press 7
+  await page.keyboard.press('KeyE'); // open player inventory
+  await sleep(300);
+  const invSlots = await page.$$('#screen .gui-slot');
+  // Inventory screen: 4 armor + 4 craft + 1 result = 9, then 27 inv, then 9 hotbar.
+  const planksIdx = await page.evaluate(() => {
+    const g = (window as any).game;
+    return g.session.inventory.slots.findIndex((s: any) => s && s.id === 5);
+  });
+  if (planksIdx < 0 || planksIdx > 8) {
+    errors.push(`planks not in hotbar where expected (slot ${planksIdx})`);
+  } else {
+    await invSlots[9 + 27 + planksIdx].hover();
+    await page.keyboard.press('Digit7');
+    await sleep(150);
+    const swapped = await page.evaluate(() => {
+      const g = (window as any).game;
+      const inv = g.session.inventory;
+      return { slot6: inv.slots[6] ? { ...inv.slots[6] } : null };
+    });
+    console.log('  digit-swap:', JSON.stringify(swapped));
+    if (swapped.slot6?.id !== 5) errors.push(`digit swap failed: ${JSON.stringify(swapped)}`);
+  }
+  await page.keyboard.press('KeyE');
+  await sleep(250);
+
   // Place a crafting table + furnace in front of the player programmatically,
   // then look at survival gameplay at night with mobs.
   await page.evaluate(() => {

@@ -102,7 +102,11 @@ export class Game {
     this.wireGlobalInput();
 
     window.addEventListener('resize', () => this.onResize());
-    window.addEventListener('beforeunload', () => this.save());
+    window.addEventListener('beforeunload', () => {
+      // Return crafting-grid/cursor items to the inventory before writing.
+      this.session?.screens.close();
+      this.save();
+    });
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) this.save();
     });
@@ -160,7 +164,8 @@ export class Game {
         else this.sound.xp();
       },
       onClose: () => {
-        if (this.mode === 'screen') this.setMode('playing');
+        // Do not resume when quitting/dying with a screen open.
+        if (this.mode === 'screen' && player.alive) this.setMode('playing');
       },
       playClick: () => this.sound.click(),
     });
@@ -236,6 +241,8 @@ export class Game {
   }
 
   private quitToTitle(): void {
+    // Close screens first so crafting-grid/cursor items are saved, not lost.
+    this.session?.screens.close();
     this.save();
     this.disposeSession();
     this.input.releaseLock();
@@ -287,11 +294,22 @@ export class Game {
       if (this.mode === 'screen') {
         if (e.code === 'Escape' || e.code === 'KeyE') {
           this.session?.screens.close();
+          // Swallow this press so the next frame doesn't instantly reopen
+          // the inventory from the same E keystroke.
+          this.input.endFrame();
         }
         return;
       }
       if (this.mode === 'paused' && e.code === 'Escape') {
         this.resume();
+      }
+    });
+
+    // Browsers deny pointer-lock requests made from the Escape key, which
+    // can leave us "playing" without mouse capture — any click re-locks.
+    document.addEventListener('mousedown', () => {
+      if (this.session && this.mode === 'playing' && !this.input.locked) {
+        this.input.requestLock();
       }
     });
   }
@@ -329,6 +347,10 @@ export class Game {
     if (!s) return;
     this.sound.death();
     this.deathTimer = 1.2;
+
+    // A container may be open: fold its grid/cursor back into the inventory
+    // first so those items spill with everything else.
+    s.screens.close();
 
     // Spill the whole inventory + some XP, vanilla style.
     const { player, inventory, entities } = s;

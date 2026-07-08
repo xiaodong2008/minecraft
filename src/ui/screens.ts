@@ -1,6 +1,6 @@
 import { ItemStack, itemDef, canStack, fuelTime, SMELTING } from '../items';
 import { matchRecipe } from '../crafting';
-import { INV_SIZE, Inventory } from '../inventory';
+import { Inventory } from '../inventory';
 import { SMELT_TIME, FurnaceState, ChestState } from '../world/world';
 import type { IconRenderer } from './icons';
 
@@ -27,7 +27,13 @@ export interface ScreenHooks {
   playClick(): void;
 }
 
-/** Modal container GUIs with vanilla click/shift-click/drag-free semantics. */
+const DOUBLE_CLICK_MS = 350;
+
+/**
+ * Modal container GUIs with vanilla slot semantics:
+ * click pick/place/swap, right-click split/place-one, shift-click quick move,
+ * double-click gather, right-button drag to sprinkle, 1-9 hotbar swap, Q drop.
+ */
 export class Screens {
   private root = document.getElementById('screen')!;
   private tooltip = document.getElementById('tooltip')!;
@@ -44,6 +50,10 @@ export class Screens {
   private furnace: FurnaceState | null = null;
   private furnaceEls: { flame?: HTMLElement; arrow?: HTMLElement } = {};
 
+  private hovered: SlotSpec | null = null;
+  private lastClickSpec: SlotSpec | null = null;
+  private lastClickTime = 0;
+
   constructor(icons: IconRenderer, inventory: Inventory, hooks: ScreenHooks) {
     this.icons = icons;
     this.inventory = inventory;
@@ -57,6 +67,58 @@ export class Screens {
         this.tooltip.style.top = `${e.clientY - 20}px`;
       }
     });
+
+    // Clicking the dark backdrop with a held stack throws it into the world.
+    this.root.addEventListener('mousedown', (e) => {
+      if (e.target === this.root && this.cursor) {
+        this.hooks.dropStack({ ...this.cursor });
+        this.cursor = null;
+        this.hooks.playClick();
+        this.renderAll();
+      }
+    });
+
+    // Keyboard slot shortcuts while a screen is open.
+    document.addEventListener('keydown', (e) => {
+      if (!this.kind) return;
+      const hov = this.hovered;
+      if (!hov || hov.result) return;
+
+      if (/^Digit[1-9]$/.test(e.code)) {
+        const i = Number(e.code.slice(5)) - 1;
+        const hotbarStack = this.inventory.slots[i];
+        const hovStack = hov.get();
+        // Both directions must be legal (armor slots, furnace fuel, ...).
+        if (hovStack && !this.slotAcceptsHotbar(i, hovStack)) return;
+        if (hotbarStack && !hov.accepts(hotbarStack)) return;
+        hov.set(hotbarStack ? { ...hotbarStack } : null);
+        this.inventory.slots[i] = hovStack ? { ...hovStack } : null;
+        this.inventory.changed();
+        this.hooks.playClick();
+        this.recomputeCraftIfNeeded(hov);
+        this.renderAll();
+        e.preventDefault();
+      } else if (e.code === 'KeyQ') {
+        const s = hov.get();
+        if (!s) return;
+        const n = e.ctrlKey || e.metaKey ? s.count : 1;
+        this.hooks.dropStack({ ...s, count: n });
+        const left = s.count - n;
+        hov.set(left > 0 ? { ...s, count: left } : null);
+        this.inventory.changed();
+        this.recomputeCraftIfNeeded(hov);
+        this.renderAll();
+        e.preventDefault();
+      }
+    });
+  }
+
+  private slotAcceptsHotbar(_i: number, _s: ItemStack): boolean {
+    return true; // hotbar slots take anything
+  }
+
+  private recomputeCraftIfNeeded(spec: SlotSpec): void {
+    if (spec.group === 'craft') this.recomputeCraft();
   }
 
   isOpen(): boolean {
@@ -66,6 +128,8 @@ export class Screens {
   open(kind: ScreenKind, container?: FurnaceState | ChestState): void {
     this.kind = kind;
     this.slots = [];
+    this.hovered = null;
+    this.lastClickSpec = null;
     this.craftGrid = new Array(kind === 'crafting' ? 9 : 4).fill(null);
     this.craftResult = null;
     this.furnace = kind === 'furnace' ? (container as FurnaceState) : null;
@@ -106,6 +170,7 @@ export class Screens {
 
     this.kind = null;
     this.furnace = null;
+    this.hovered = null;
     this.root.classList.add('hidden');
     this.root.innerHTML = '';
     this.tooltip.classList.add('hidden');
@@ -214,6 +279,11 @@ export class Screens {
       }));
     }
 
+    // Player preview
+    const preview = document.createElement('div');
+    preview.className = 'player-preview';
+    preview.appendChild(drawPlayerPortrait());
+
     const craftWrap = document.createElement('div');
     craftWrap.className = 'inv-craft';
     const label = document.createElement('div');
@@ -222,7 +292,7 @@ export class Screens {
     craftWrap.appendChild(label);
     this.craftArea(craftWrap, 2);
 
-    top.append(armorCol, craftWrap);
+    top.append(armorCol, preview, craftWrap);
     panel.appendChild(top);
   }
 
@@ -293,6 +363,13 @@ export class Screens {
     const spacer = document.createElement('div');
     spacer.style.height = '10px';
     panel.appendChild(spacer);
+    // Vanilla labels the player section in container GUIs.
+    if (this.kind === 'chest' || this.kind === 'furnace') {
+      const label = document.createElement('div');
+      label.className = 'gui-title';
+      label.textContent = 'Inventory';
+      panel.appendChild(label);
+    }
     this.grid(panel, 9, 27, (i) => ({
       get: () => this.inventory.slots[9 + i],
       set: (s) => { this.inventory.slots[9 + i] = s; this.inventory.changed(); },
@@ -329,21 +406,73 @@ export class Screens {
     el.addEventListener('mousedown', (e) => {
       e.preventDefault();
       this.hooks.playClick();
-      if (e.shiftKey) this.shiftClick(spec);
-      else if (e.button === 0) this.leftClick(spec);
-      else if (e.button === 2) this.rightClick(spec);
+      if (e.shiftKey) {
+        this.shiftClick(spec);
+      } else if (e.button === 0) {
+        const now = performance.now();
+        const isDouble = this.lastClickSpec === spec && now - this.lastClickTime < DOUBLE_CLICK_MS;
+        this.lastClickSpec = spec;
+        this.lastClickTime = now;
+        if (isDouble && this.cursor && !spec.result) {
+          this.gatherAll();
+        } else {
+          this.leftClick(spec);
+        }
+      } else if (e.button === 2) {
+        this.rightClick(spec);
+      }
       this.renderAll();
     });
     el.addEventListener('contextmenu', (e) => e.preventDefault());
-    el.addEventListener('mouseenter', () => {
+    el.addEventListener('mouseenter', (e) => {
+      this.hovered = spec;
+      // Right-button drag: sprinkle one item per slot passed over.
+      if ((e.buttons & 2) !== 0 && this.cursor && !spec.result) {
+        this.rightClick(spec);
+        this.renderAll();
+      } else if ((e.buttons & 1) !== 0 && this.cursor && !spec.result) {
+        // Left-button drag: fill slots with the whole allowed amount as you sweep.
+        this.leftDragInto(spec);
+        this.renderAll();
+      }
       const s = spec.get();
       if (s && !this.cursor) {
         this.tooltip.textContent = itemDef(s.id).name;
         this.tooltip.classList.remove('hidden');
       }
     });
-    el.addEventListener('mouseleave', () => this.tooltip.classList.add('hidden'));
+    el.addEventListener('mouseleave', () => {
+      if (this.hovered === spec) this.hovered = null;
+      this.tooltip.classList.add('hidden');
+    });
     return el;
+  }
+
+  /** Left-drag over an empty compatible slot: place one (classic paint-drag). */
+  private leftDragInto(spec: SlotSpec): void {
+    if (!this.cursor || spec.get() || !spec.accepts(this.cursor)) return;
+    spec.set({ ...this.cursor, count: 1 });
+    this.cursor.count--;
+    if (this.cursor.count <= 0) this.cursor = null;
+    this.recomputeCraftIfNeeded(spec);
+  }
+
+  /** Double-click: gather every matching stack onto the cursor. */
+  private gatherAll(): void {
+    if (!this.cursor) return;
+    const max = itemDef(this.cursor.id).maxStack;
+    for (const slot of this.slots) {
+      if (this.cursor.count >= max) break;
+      if (slot.result) continue;
+      const s = slot.get();
+      if (!s || !canStack(s, this.cursor)) continue;
+      const take = Math.min(max - this.cursor.count, s.count);
+      this.cursor.count += take;
+      const left = s.count - take;
+      slot.set(left > 0 ? { ...s, count: left } : null);
+      this.recomputeCraftIfNeeded(slot);
+    }
+    this.inventory.changed();
   }
 
   private leftClick(spec: SlotSpec): void {
@@ -459,7 +588,7 @@ export class Screens {
 
     // Armor equip from anywhere
     const armorInfo = itemDef(inSlot.id).armor;
-    if (armorInfo && spec.group !== 'armor' && (this.kind === 'inventory') && !this.inventory.armor[armorInfo.piece]) {
+    if (armorInfo && spec.group !== 'armor' && this.kind === 'inventory' && !this.inventory.armor[armorInfo.piece]) {
       this.inventory.armor[armorInfo.piece] = { ...inSlot };
       spec.set(null);
       this.inventory.changed();
@@ -473,6 +602,7 @@ export class Screens {
       if (!remaining) break;
     }
     spec.set(remaining);
+    this.recomputeCraftIfNeeded(spec);
     this.inventory.changed();
   }
 
@@ -578,4 +708,70 @@ export class Screens {
       this.cursorEl.appendChild(span);
     }
   }
+}
+
+// ---------------- player portrait (inventory screen) ----------------
+
+type RGB = readonly [number, number, number];
+
+/** Simple front-facing Steve on a dark backdrop, vanilla inventory style. */
+function drawPlayerPortrait(): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  const scale = 5;
+  canvas.width = 16 * scale;
+  canvas.height = 32 * scale;
+  const ctx = canvas.getContext('2d')!;
+  ctx.imageSmoothingEnabled = false;
+
+  const SKIN: RGB = [198, 152, 116];
+  const SKIN_D: RGB = [178, 132, 100];
+  const HAIR: RGB = [58, 42, 30];
+  const EYE_W: RGB = [255, 255, 255];
+  const EYE_B: RGB = [70, 62, 140];
+  const MOUTH: RGB = [140, 100, 80];
+  const SHIRT: RGB = [0, 156, 150];
+  const SHIRT_D: RGB = [0, 132, 128];
+  const PANTS: RGB = [70, 74, 150];
+  const PANTS_D: RGB = [58, 62, 128];
+  const SHOE: RGB = [104, 104, 104];
+
+  const px = (x: number, y: number, c: RGB): void => {
+    ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+    ctx.fillRect(x * scale, y * scale, scale, scale);
+  };
+  const rect = (x: number, y: number, w: number, h: number, c: RGB): void => {
+    for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) px(xx, yy, c);
+  };
+
+  // Head (8 wide, x4..11, y0..7)
+  rect(4, 0, 8, 8, SKIN);
+  rect(4, 0, 8, 2, HAIR);
+  px(4, 2, HAIR); px(11, 2, HAIR);
+  // eyes
+  px(5, 4, EYE_W); px(6, 4, EYE_B);
+  px(9, 4, EYE_B); px(10, 4, EYE_W);
+  // nose + mouth
+  px(7, 5, SKIN_D); px(8, 5, SKIN_D);
+  px(7, 6, MOUTH); px(8, 6, MOUTH);
+
+  // Body (y8..19, x4..11)
+  rect(4, 8, 8, 12, SHIRT);
+  rect(4, 8, 8, 1, SHIRT_D);
+  rect(7, 12, 2, 4, SHIRT_D);
+
+  // Arms (x0..3 and x12..15)
+  rect(0, 8, 4, 12, SKIN);
+  rect(12, 8, 4, 12, SKIN);
+  rect(0, 8, 4, 1, SHIRT_D);
+  rect(12, 8, 4, 1, SHIRT_D);
+  rect(0, 18, 4, 2, SKIN_D);
+  rect(12, 18, 4, 2, SKIN_D);
+
+  // Legs (y20..31)
+  rect(4, 20, 4, 12, PANTS);
+  rect(8, 20, 4, 12, PANTS_D);
+  rect(4, 29, 4, 3, SHOE);
+  rect(8, 29, 4, 3, SHOE);
+
+  return canvas;
 }

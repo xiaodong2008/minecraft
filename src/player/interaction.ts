@@ -311,19 +311,19 @@ export class Interaction {
 
     if (!held || !heldDef) return;
 
-    // 2) Food
-    if (heldDef.food && this.player.food < 20 && clicked) {
+    // 2) Food — holding right-click keeps eating (vanilla)
+    if (heldDef.food && this.player.food < 20 && (clicked || input.buttons[2])) {
       this.usingKind = 'eat';
       this.useTime = 0;
       return;
     }
 
-    // 3) Bow
-    if (held.id === I.Bow && clicked) {
+    // 3) Bow — holding right-click starts drawing again after a shot
+    if (held.id === I.Bow && (clicked || input.buttons[2])) {
       if (this.inventory.countOf(I.Arrow) > 0) {
         this.usingKind = 'bow';
         this.useTime = 0;
-      } else {
+      } else if (clicked) {
         this.events.onDeny('No arrows');
       }
       return;
