@@ -181,6 +181,22 @@ export class Terrain {
         const wz = baseZ + lz;
         const h = this.heightAt(wx, wz);
         if (h + 1 >= WORLD_HEIGHT) continue;
+
+        // Sugar cane: on grass/sand exactly at sea level with adjacent water.
+        if (h === SEA_LEVEL && hash2(wx, wz, this.seed ^ 0xca9e) < 0.12) {
+          const top = chunk.getBlock(lx, h, lz);
+          if ((top === B.Grass || top === B.Sand) &&
+              (this.heightAt(wx + 1, wz) < SEA_LEVEL || this.heightAt(wx - 1, wz) < SEA_LEVEL ||
+               this.heightAt(wx, wz + 1) < SEA_LEVEL || this.heightAt(wx, wz - 1) < SEA_LEVEL)) {
+            const caneH = 1 + Math.floor(hash2(wx, wz, this.seed ^ 0x5eed) * 3);
+            for (let k = 1; k <= caneH && h + k < WORLD_HEIGHT; k++) {
+              if (chunk.getBlock(lx, h + k, lz) !== B.Air) break;
+              chunk.setBlock(lx, h + k, lz, B.SugarCane);
+            }
+            continue;
+          }
+        }
+
         if (chunk.getBlock(lx, h, lz) !== B.Grass) continue;
         if (chunk.getBlock(lx, h + 1, lz) !== B.Air) continue;
         if (this.treeAt(wx, wz)) continue;

@@ -86,6 +86,10 @@ export interface MobCtx {
   shootArrow(x: number, y: number, z: number, dir: THREE.Vector3, damage: number): void;
   explode(x: number, y: number, z: number, power: number): void;
   flame(x: number, y: number, z: number): void;
+  hearts(x: number, y: number, z: number): void;
+  spawnBaby(type: MobType, x: number, y: number, z: number): void;
+  /** Living mobs of the same type near a point (for finding a mate). */
+  findMate(self: Mob): Mob | null;
   mobSound(type: MobType, kind: 'hurt' | 'death' | 'ambient' | 'fuse'): void;
 }
 
@@ -113,7 +117,13 @@ export class Mob extends Entity {
   dying = 0;
   private aggro = false;
 
-  constructor(type: MobType, x: number, y: number, z: number, scene: THREE.Scene, hp?: number) {
+  /** Breeding state (passive mobs). */
+  love = 0;
+  breedCooldown = 0;
+  /** Seconds left growing up; 0 = adult. */
+  growTimer = 0;
+
+  constructor(type: MobType, x: number, y: number, z: number, scene: THREE.Scene, hp?: number, baby = false) {
     super();
     this.type = type;
     this.def = MOB_DEFS[type];
@@ -123,7 +133,31 @@ export class Mob extends Entity {
     this.pos.set(x, y, z);
     this.model = buildMobModel(type);
     this.obj = this.model.root;
+    if (baby) {
+      this.growTimer = 120;
+      this.halfW *= 0.5;
+      this.height *= 0.5;
+    }
     scene.add(this.obj);
+  }
+
+  get isBaby(): boolean {
+    return this.growTimer > 0;
+  }
+
+  /** Right-clicked with breeding food. True if consumed. */
+  feed(ctx: MobCtx): boolean {
+    if (this.def.hostile || this.dying > 0) return false;
+    if (this.isBaby) {
+      this.growTimer = Math.max(0, this.growTimer - 12); // snacks speed up growth
+      ctx.hearts(this.pos.x, this.pos.y + this.height, this.pos.z);
+      return true;
+    }
+    if (this.love > 0 || this.breedCooldown > 0) return false;
+    this.love = 30;
+    ctx.hearts(this.pos.x, this.pos.y + this.height, this.pos.z);
+    ctx.mobSound(this.type, 'ambient');
+    return true;
   }
 
   get hostile(): boolean {
@@ -174,6 +208,18 @@ export class Mob extends Entity {
     this.attackCooldown = Math.max(0, this.attackCooldown - dt);
     this.shootCooldown = Math.max(0, this.shootCooldown - dt);
     this.fleeTimer = Math.max(0, this.fleeTimer - dt);
+    this.love = Math.max(0, this.love - dt);
+    this.breedCooldown = Math.max(0, this.breedCooldown - dt);
+    if (this.growTimer > 0) {
+      this.growTimer = Math.max(0, this.growTimer - dt);
+      if (this.growTimer === 0) {
+        this.halfW = this.def.halfW;
+        this.height = this.def.height;
+      }
+    }
+    if (this.love > 0 && Math.random() < dt * 1.2) {
+      ctx.hearts(this.pos.x, this.pos.y + this.height, this.pos.z);
+    }
 
     const p = ctx.playerPos;
     const dx = p.x - this.pos.x;
@@ -220,6 +266,29 @@ export class Mob extends Entity {
       moveX = fx / fl;
       moveZ = fz / fl;
       speed *= 1.7;
+    } else if (this.love > 0) {
+      const mate = ctx.findMate(this);
+      if (mate) {
+        const mx = mate.pos.x - this.pos.x;
+        const mz = mate.pos.z - this.pos.z;
+        const md = Math.hypot(mx, mz);
+        if (md > 1.1) {
+          moveX = mx / (md || 1);
+          moveZ = mz / (md || 1);
+          speed *= 0.7;
+        } else {
+          // Breed: this mob is the one that spawns the baby.
+          this.love = 0;
+          mate.love = 0;
+          this.breedCooldown = 60;
+          mate.breedCooldown = 60;
+          const bx = (this.pos.x + mate.pos.x) / 2;
+          const bz = (this.pos.z + mate.pos.z) / 2;
+          ctx.spawnBaby(this.type, bx, Math.max(this.pos.y, mate.pos.y) + 0.1, bz);
+          ctx.hearts(bx, this.pos.y + this.height, bz);
+          ctx.mobSound(this.type, 'ambient');
+        }
+      }
     } else if (wantsChase && distH > 0.05) {
       const toward = { x: dx / (distH || 1), z: dz / (distH || 1) };
 
@@ -285,11 +354,16 @@ export class Mob extends Entity {
       }
     }
 
-    // Creeper swells while fusing
-    if (this.type === 'creeper') {
+    // Baby scale / creeper swell
+    if (this.isBaby) {
+      const s = 0.5 + 0.5 * (1 - this.growTimer / 120);
+      this.obj.scale.setScalar(s);
+    } else if (this.type === 'creeper') {
       const s = this.fuse >= 0 ? 1 + this.fuse * 0.25 : 1;
       this.obj.scale.set(s, 1 + (s - 1) * 0.5, s);
       if (this.fuse >= 0) { moveX = 0; moveZ = 0; }
+    } else {
+      this.obj.scale.setScalar(1);
     }
 
     // Steering

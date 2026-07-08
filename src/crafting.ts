@@ -63,6 +63,8 @@ shaped(['SS', 'SS'], { S: B.Stone }, B.StoneBrick, 4);
 shaped(['SS', 'SS'], { S: B.Sand }, B.Sandstone);
 shaped(['GSG', 'SGS', 'GSG'], { G: I.Gunpowder, S: B.Sand }, B.TNT);
 shaped(['WWW', 'WWW', 'WWW'], { W: I.String }, B.WoolWhite);
+shaped(['WWW', 'PPP'], { W: B.WoolWhite, P: B.OakPlanks }, B.Bed);
+shaped(['I I', ' I '], { I: I.IronIngot }, I.Bucket);
 
 // ---------------- matching ----------------
 

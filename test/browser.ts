@@ -5,6 +5,8 @@
 
 import { launch } from 'puppeteer-core';
 import { mkdirSync } from 'node:fs';
+import { B } from '../src/blocks';
+import { I } from '../src/ids';
 
 const BASE = process.argv[2] ?? 'http://localhost:5174/';
 const CHROME = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -441,6 +443,227 @@ async function main(): Promise<void> {
   console.log('  respawned:', JSON.stringify(respawned));
   if (!respawned.alive || respawned.health !== 20) errors.push(`respawn failed: ${JSON.stringify(respawned)}`);
   await shot('12-respawned');
+
+  // --- Shift-drag: hold shift+LMB and sweep slots to quick-move each stack
+  await page.evaluate((c) => {
+    const g = (window as any).game;
+    const s = g.session;
+    // The death drop from the previous scenario leaves items on the ground
+    // that magnet back into the inventory — clear them for a clean slate.
+    for (const it of s.entities.items) it.dead = true;
+    for (const o of s.entities.orbs) o.dead = true;
+    const inv = s.inventory;
+    inv.slots.fill(null);
+    inv.slots[9] = { id: c.stone, count: 10 };
+    inv.slots[10] = { id: c.stone, count: 11 };
+    inv.slots[11] = { id: c.stone, count: 12 };
+    inv.changed();
+    const p = s.player.pos;
+    const cx = Math.floor(p.x) + 5, cy = Math.floor(p.y) + 1, cz = Math.floor(p.z);
+    s.world.setBlockAt(cx, cy, cz, 36, 2);
+    const chest = s.world.ensureChest(cx, cy, cz);
+    chest.slots.fill(null);
+    g.openContainer('chest', cx, cy, cz);
+  }, { stone: B.Stone });
+  await sleep(300);
+  const sweepSlots = await page.$$('#screen .gui-slot');
+  const s0 = (await sweepSlots[27].boundingBox())!; // inv slot 9
+  const s2 = (await sweepSlots[29].boundingBox())!; // inv slot 11
+  await page.keyboard.down('Shift');
+  await page.mouse.move(s0.x + s0.width / 2, s0.y + s0.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(s2.x + s2.width / 2, s2.y + s2.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await page.keyboard.up('Shift');
+  await sleep(150);
+  const sweepRes = await page.evaluate(() => {
+    const g = (window as any).game;
+    const p = g.session.player.pos;
+    const chest = g.session.world.ensureChest(Math.floor(p.x) + 5, Math.floor(p.y) + 1, Math.floor(p.z));
+    return {
+      chestTotal: chest.slots.filter((s: any) => s).reduce((a: number, s: any) => a + s.count, 0),
+      invLeft: g.session.inventory.slots.filter((s: any) => s).length,
+    };
+  });
+  console.log('  shift-drag sweep:', JSON.stringify(sweepRes));
+  if (sweepRes.chestTotal !== 33 || sweepRes.invLeft !== 0) {
+    errors.push(`shift-drag sweep failed: ${JSON.stringify(sweepRes)}`);
+  }
+  await page.keyboard.press('Escape');
+  await sleep(250);
+
+  // --- Bed: right-click sets spawn; at night it sleeps through to sunrise
+  const ids = { bed: B.Bed, water: B.Water, sand: B.Sand, stone: B.Stone, torch: B.Torch,
+    bucket: I.Bucket, waterBucket: I.WaterBucket, wheat: I.Wheat };
+  await page.evaluate((c) => {
+    const g = (window as any).game;
+    const s = g.session;
+    const p = s.player.pos;
+    const x = Math.floor(p.x) + 2, z = Math.floor(p.z);
+    const y = s.world.surfaceYAt(x, z);
+    s.world.setBlockAt(x, y + 1, z, c.bed, 0);
+    s.sky.time = 0.9; // deep night
+    for (const m of s.entities.mobs) { m.dead = true; m.dying = 0; } // no monsters nearby
+    g.useBed(x, y + 1, z);
+  }, ids);
+  await sleep(400);
+  const midSleep = await page.evaluate(() => ({
+    fade: window.getComputedStyle(document.getElementById('sleep-fade')!).opacity,
+    hidden: document.getElementById('sleep-fade')!.classList.contains('hidden'),
+  }));
+  await sleep(2600);
+  const afterSleep = await page.evaluate(() => {
+    const g = (window as any).game;
+    return {
+      time: g.session.sky.time,
+      spawnX: g.session.player.spawnPoint.x,
+      px: Math.floor(g.session.player.pos.x) + 2.5,
+    };
+  });
+  console.log('  bed sleep:', JSON.stringify({ midSleep, afterSleep }));
+  if (midSleep.hidden || Number(midSleep.fade) < 0.05) {
+    errors.push(`sleep fade not shown: ${JSON.stringify(midSleep)}`);
+  }
+  if (Math.abs(afterSleep.time - 0.25) > 0.02) {
+    errors.push(`sleeping did not advance to sunrise: ${JSON.stringify(afterSleep)}`);
+  }
+  if (Math.abs(afterSleep.spawnX - afterSleep.px) > 0.01) {
+    errors.push(`bed did not set spawn point: ${JSON.stringify(afterSleep)}`);
+  }
+  await shot('13-after-sleep');
+
+  // --- Bucket: scoop a water cell, then pour it back
+  const bucketRes = await page.evaluate((c) => {
+    const g = (window as any).game;
+    const s = g.session;
+    const p = s.player.pos;
+    const x = Math.floor(p.x) + 2, z = Math.floor(p.z), y = Math.floor(p.y);
+    s.world.setBlockAt(x, y + 1, z, c.water);
+    s.inventory.slots.fill(null);
+    s.inventory.slots[0] = { id: c.bucket, count: 1 };
+    s.inventory.selected = 0;
+    s.inventory.changed();
+    const eye = s.player.eyePosition();
+    const dx = x + 0.5 - eye.x, dy = y + 1.5 - eye.y, dz = z + 0.5 - eye.z;
+    s.player.yaw = Math.atan2(-dx, -dz);
+    s.player.pitch = Math.atan2(dy, Math.hypot(dx, dz));
+    const scooped = s.interaction.scoopLiquid();
+    const cellAfterScoop = s.world.getBlockAt(x, y + 1, z);
+    const heldAfterScoop = s.inventory.slots[0]?.id;
+    // Aim at the ground block below the now-empty cell and pour onto its top.
+    const dy2 = y + 0.99 - eye.y;
+    s.player.pitch = Math.atan2(dy2, Math.hypot(dx, dz));
+    s.interaction.target = s.world.raycast(s.player.eyePosition(), s.player.lookDirection(), 5);
+    const targetId = s.interaction.target?.id;
+    const poured = s.interaction.pourBucket(heldAfterScoop);
+    return {
+      scooped, cellAfterScoop, heldAfterScoop, targetId,
+      poured,
+      cellAfterPour: s.world.getBlockAt(x, y + 1, z),
+      heldAfterPour: s.inventory.slots[0]?.id,
+    };
+  }, ids);
+  console.log('  bucket:', JSON.stringify(bucketRes));
+  if (!bucketRes.scooped || bucketRes.cellAfterScoop !== 0 || bucketRes.heldAfterScoop !== ids.waterBucket) {
+    errors.push(`bucket scoop failed: ${JSON.stringify(bucketRes)}`);
+  }
+  if (!bucketRes.poured || bucketRes.cellAfterPour !== ids.water || bucketRes.heldAfterPour !== ids.bucket) {
+    errors.push(`bucket pour failed: ${JSON.stringify(bucketRes)}`);
+  }
+
+  // --- Breeding: feed two cows wheat, expect a calf within a few seconds
+  await page.evaluate((c) => {
+    const g = (window as any).game;
+    const s = g.session;
+    const p = s.player.pos;
+    s.sky.time = 0.35;
+    const a = s.entities.spawnMob('cow', p.x + 3, p.y + 0.5, p.z);
+    const b = s.entities.spawnMob('cow', p.x + 4.2, p.y + 0.5, p.z);
+    const ctx = s.entities.ctx();
+    a.feed(ctx);
+    b.feed(ctx);
+  }, ids);
+  await sleep(4000);
+  const cows = await page.evaluate(() => {
+    const g = (window as any).game;
+    const list = g.session.entities.mobs.filter((m: any) => m.type === 'cow' && !m.dead);
+    return { total: list.length, babies: list.filter((m: any) => m.isBaby).length };
+  });
+  console.log('  breeding:', JSON.stringify(cows));
+  if (cows.total !== 3 || cows.babies !== 1) {
+    errors.push(`breeding failed: ${JSON.stringify(cows)}`);
+  }
+  await shot('14-breeding');
+
+  // --- Bed collision: walking into a bed steps up onto it (0.5625 high)
+  const bedWalk = await page.evaluate((c) => {
+    const g = (window as any).game;
+    const s = g.session;
+    const p = s.player.pos;
+    const bx = Math.floor(p.x), bz = Math.floor(p.z);
+    const y = s.world.surfaceYAt(bx, bz);
+    // Flatten a short lane heading +x and cover it with two beds.
+    for (let i = 1; i <= 2; i++) {
+      s.world.setBlockAt(bx + i, y, bz, c.stone);
+      s.world.setBlockAt(bx + i, y + 1, bz, 0);
+      s.world.setBlockAt(bx + i, y + 2, bz, 0);
+      s.world.setBlockAt(bx + i, y + 1, bz, c.bed, 0);
+    }
+    p.set(bx + 0.5, y + 1.05, bz + 0.5);
+    s.player.vel.set(0, 0, 0);
+    s.player.yaw = -Math.PI / 2; // face +x
+    s.player.pitch = 0;
+    return { startY: p.y, bedTop: y + 1 + 0.5625 };
+  }, ids);
+  await page.keyboard.down('KeyW');
+  await sleep(450);
+  await page.keyboard.up('KeyW');
+  const bedWalkAfter = await page.evaluate(() => {
+    const g = (window as any).game;
+    return { y: g.session.player.pos.y, x: g.session.player.pos.x };
+  });
+  console.log('  bed step-up:', JSON.stringify({ bedWalk, bedWalkAfter }));
+  if (bedWalkAfter.y < bedWalk.bedTop - 0.05) {
+    errors.push(`player did not step up onto the bed: ${JSON.stringify({ bedWalk, bedWalkAfter })}`);
+  }
+
+  // --- Sand gravity: sand column falls when its support is mined
+  const sandRes = await page.evaluate((c) => {
+    const g = (window as any).game;
+    const s = g.session;
+    const p = s.player.pos;
+    const x = Math.floor(p.x) - 3, z = Math.floor(p.z) - 3;
+    const y = s.world.surfaceYAt(x, z);
+    s.world.setBlockAt(x, y + 1, z, c.stone);
+    s.world.setBlockAt(x, y + 2, z, c.sand);
+    s.world.setBlockAt(x, y + 3, z, c.sand);
+    // Mine the stone out from under the sand column.
+    s.world.setBlockAt(x, y + 1, z, 0);
+    return {
+      cellsNowAir:
+        s.world.getBlockAt(x, y + 2, z) === 0 &&
+        s.world.getBlockAt(x, y + 3, z) === 0,
+      fallingCount: s.entities.falling.length,
+      x, z, baseY: y,
+    };
+  }, ids);
+  await sleep(1500); // let them land
+  const sandAfter = await page.evaluate((info) => {
+    const g = (window as any).game;
+    const s = g.session;
+    return {
+      landedTop: s.world.getBlockAt(info.x, info.baseY + 1, info.z),
+      landedAbove: s.world.getBlockAt(info.x, info.baseY + 2, info.z),
+      fallingLeft: s.entities.falling.length,
+    };
+  }, sandRes);
+  console.log('  sand gravity:', JSON.stringify({ sandRes, sandAfter }));
+  if (!sandRes.cellsNowAir || sandRes.fallingCount !== 2) {
+    errors.push(`sand did not start falling: ${JSON.stringify(sandRes)}`);
+  }
+  if (sandAfter.landedTop !== ids.sand || sandAfter.landedAbove !== ids.sand || sandAfter.fallingLeft !== 0) {
+    errors.push(`sand did not land as blocks: ${JSON.stringify(sandAfter)}`);
+  }
 
   await browser.close();
 

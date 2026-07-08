@@ -605,7 +605,37 @@ const PAINTERS: Record<number, (ctx: CanvasRenderingContext2D) => void> = {
     '................',
     '................',
   ], { W: [210, 210, 214], H: HANDLE, F: [240, 240, 244] }),
+  [I.Bucket]: bucket(null),
+  [I.WaterBucket]: bucket([58, 92, 220]),
+  [I.LavaBucket]: bucket([252, 120, 30]),
 };
+
+function bucket(fill: RGB | null): (ctx: CanvasRenderingContext2D) => void {
+  const rows = [
+    '................',
+    '................',
+    '....M......M....',
+    '...M.MMMMMM.M...',
+    '...MFFFFFFFFM...',
+    '...MFFFFFFFFM...',
+    '....MWWWWWW*....',
+    '....MWWWWWWM....',
+    '....MWWWWWWM....',
+    '.....MWWWWM.....',
+    '.....MWWWWM.....',
+    '......MMMM......',
+    '................',
+    '................',
+    '................',
+    '................',
+  ];
+  return art(rows, {
+    M: [90, 90, 96],
+    W: [178, 178, 186],
+    '*': [90, 90, 96],
+    ...(fill ? { F: fill } : { F: [140, 140, 148] }),
+  });
+}
 
 // Tools
 for (let tier = 0; tier < TOOL_TIERS.length; tier++) {

@@ -31,10 +31,14 @@ localStorage), click *Back to Game* and survive.
 - **Mobs** — zombies, skeletons (they kite and shoot), creepers (they hiss and
   explode), spiders (neutral in daylight), plus pigs, cows, sheep and chickens.
   Hostiles spawn in darkness and burn at sunrise; animals drop meat you can
-  cook. Classic box models with walk/attack animations.
+  cook — and breed: feed two cows/sheep/pigs wheat (chickens: seeds) and a baby
+  pops out with heart particles. Classic box models with walk/attack animations.
 - **World** — infinite chunked terrain with biomes, caves, ores, lava lakes,
-  day/night cycle (20 min), farming (hoe → farmland → wheat → bread), saplings
-  regrow trees, grass spreads, leaves decay, bone meal works, TNT chains.
+  day/night cycle (20 min), farming (hoe → farmland → wheat → bread), sugar
+  cane along shorelines, saplings regrow trees, grass spreads, leaves decay,
+  bone meal works, TNT chains, sand and gravel fall when unsupported.
+- **Beds & buckets** — craft a bed (wool + planks) to set your spawn and sleep
+  through the night; buckets move water and lava around.
 - **UI/UX** — Minecraft-styled title screen, world list, options (render
   distance, sound, sensitivity, FOV), pause menu, inventory with drag/shift-
   click/right-click-split slot handling, tooltips, hotbar with counts and

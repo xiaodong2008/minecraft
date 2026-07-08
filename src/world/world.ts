@@ -148,6 +148,12 @@ export class World implements LightWorldAccess {
     return isSolid(this.getBlockAt(wx, wy, wz));
   }
 
+  /** Collision height of the cell: 0 = not solid, else block height (1 for full cubes, 0.5625 for beds). */
+  solidHeightAt(wx: number, wy: number, wz: number): number {
+    const def = blockDef(this.getBlockAt(wx, wy, wz));
+    return def.solid ? def.height : 0;
+  }
+
   getSkyAt(wx: number, wy: number, wz: number): number {
     if (wy >= WORLD_HEIGHT) return 15;
     if (wy < 0) return 0;
@@ -221,10 +227,23 @@ export class World implements LightWorldAccess {
       const above = this.getBlockAt(wx, wy + 1, wz);
       if (blockDef(above).needsSupport) {
         this.setBlockAt(wx, wy + 1, wz, B.Air, 0, record);
+        this.onSupportBroken?.(wx, wy + 1, wz, above);
+      } else if (blockDef(above).gravity) {
+        this.onGravityBlock?.(wx, wy + 1, wz, above);
       }
+    }
+    // A gravity block placed over a hole starts falling immediately.
+    if (blockDef(id).gravity && !isSolid(this.getBlockAt(wx, wy - 1, wz))) {
+      this.onGravityBlock?.(wx, wy, wz, id);
     }
     return true;
   }
+
+  /** Sand/gravel lost its support — game layer turns it into a falling entity. */
+  onGravityBlock: ((x: number, y: number, z: number, id: number) => void) | null = null;
+
+  /** A support-needing block (torch/flower/bed/cane) popped off — drop its items. */
+  onSupportBroken: ((x: number, y: number, z: number, id: number) => void) | null = null;
 
   /** Top-most solid block y at a column (for spawning). */
   surfaceYAt(wx: number, wz: number): number {
@@ -289,6 +308,41 @@ export class World implements LightWorldAccess {
       if (t > maxDist) break;
       const id = this.getBlockAt(x, y, z);
       if (isTargetable(id)) {
+        return { x, y, z, nx, ny, nz, id, dist: t };
+      }
+    }
+    return null;
+  }
+
+  /** Like raycast but stops at (and returns) the first liquid cell too. */
+  raycastLiquid(origin: THREE.Vector3, dir: THREE.Vector3, maxDist: number): RaycastHit | null {
+    let x = Math.floor(origin.x);
+    let y = Math.floor(origin.y);
+    let z = Math.floor(origin.z);
+
+    const stepX = dir.x > 0 ? 1 : dir.x < 0 ? -1 : 0;
+    const stepY = dir.y > 0 ? 1 : dir.y < 0 ? -1 : 0;
+    const stepZ = dir.z > 0 ? 1 : dir.z < 0 ? -1 : 0;
+    const tDeltaX = stepX !== 0 ? Math.abs(1 / dir.x) : Infinity;
+    const tDeltaY = stepY !== 0 ? Math.abs(1 / dir.y) : Infinity;
+    const tDeltaZ = stepZ !== 0 ? Math.abs(1 / dir.z) : Infinity;
+    let tMaxX = stepX > 0 ? (x + 1 - origin.x) / dir.x : stepX < 0 ? (x - origin.x) / dir.x : Infinity;
+    let tMaxY = stepY > 0 ? (y + 1 - origin.y) / dir.y : stepY < 0 ? (y - origin.y) / dir.y : Infinity;
+    let tMaxZ = stepZ > 0 ? (z + 1 - origin.z) / dir.z : stepZ < 0 ? (z - origin.z) / dir.z : Infinity;
+
+    let t = 0;
+    let nx = 0, ny = 0, nz = 0;
+    while (t <= maxDist) {
+      if (tMaxX < tMaxY && tMaxX < tMaxZ) {
+        x += stepX; t = tMaxX; tMaxX += tDeltaX; nx = -stepX; ny = 0; nz = 0;
+      } else if (tMaxY < tMaxZ) {
+        y += stepY; t = tMaxY; tMaxY += tDeltaY; nx = 0; ny = -stepY; nz = 0;
+      } else {
+        z += stepZ; t = tMaxZ; tMaxZ += tDeltaZ; nx = 0; ny = 0; nz = -stepZ;
+      }
+      if (t > maxDist) break;
+      const id = this.getBlockAt(x, y, z);
+      if (isTargetable(id) || blockDef(id).liquid) {
         return { x, y, z, nx, ny, nz, id, dist: t };
       }
     }
@@ -458,6 +512,17 @@ export class World implements LightWorldAccess {
       if (!this.logNearby(x, y, z, 4) && this.rand() < 0.4) {
         this.setBlockAt(x, y, z, B.Air);
         this.onLeafDecay?.(x, y, z);
+      }
+      return;
+    }
+
+    if (id === B.SugarCane) {
+      // Only the top segment grows, up to 3 tall.
+      if (this.getBlockAt(x, y + 1, z) !== B.Air) return;
+      let base = y;
+      while (this.getBlockAt(x, base - 1, z) === B.SugarCane) base--;
+      if (y - base + 1 < 3 && this.rand() < 0.25) {
+        this.setBlockAt(x, y + 1, z, B.SugarCane);
       }
     }
   }

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ItemEntity, XpOrb } from './itemdrop';
-import { Arrow, ArrowHitTarget, PrimedTnt } from './projectiles';
+import { Arrow, ArrowHitTarget, PrimedTnt, FallingBlock } from './projectiles';
 import { Mob, MobCtx } from './mob';
 import { MobType } from '../render/mobmodels';
 import { makeItemObject } from '../render/itemmesh';
@@ -28,6 +28,7 @@ export class EntityManager {
   orbs: XpOrb[] = [];
   arrows: Arrow[] = [];
   tnts: PrimedTnt[] = [];
+  falling: FallingBlock[] = [];
   mobs: Mob[] = [];
 
   /** Chunks that already received their one-time passive mob seeding. */
@@ -87,8 +88,8 @@ export class EntityManager {
     }
   }
 
-  spawnMob(type: MobType, x: number, y: number, z: number, hp?: number): Mob {
-    const m = new Mob(type, x, y, z, this.scene, hp);
+  spawnMob(type: MobType, x: number, y: number, z: number, hp?: number, baby = false): Mob {
+    const m = new Mob(type, x, y, z, this.scene, hp, baby);
     this.mobs.push(m);
     return m;
   }
@@ -103,6 +104,13 @@ export class EntityManager {
     obj.scale.setScalar(0.98);
     this.tnts.push(new PrimedTnt(bx + 0.5, by, bz + 0.5, obj, this.scene));
     this.sound.fuse();
+  }
+
+  /** Turn a world block into a falling entity (sand/gravel losing support). */
+  spawnFallingBlock(bx: number, by: number, bz: number, id: number): void {
+    const obj = makeItemObject(id, this.atlas);
+    obj.scale.setScalar(0.98);
+    this.falling.push(new FallingBlock(bx, by, bz, id, obj, this.scene));
   }
 
   explode(x: number, y: number, z: number, power: number): void {
@@ -184,6 +192,11 @@ export class EntityManager {
     return n;
   }
 
+  /** Context handed to mob AI; also used by interaction for feed/attack effects. */
+  ctx(): MobCtx {
+    return this.mobCtx();
+  }
+
   private mobCtx(): MobCtx {
     return {
       world: this.world,
@@ -194,6 +207,23 @@ export class EntityManager {
       shootArrow: (x, y, z, dir, damage) => this.shootArrow(x, y, z, dir, 22, damage, false),
       explode: (x, y, z, power) => this.explode(x, y, z, power),
       flame: (x, y, z) => this.particles.flame(x, y, z),
+      hearts: (x, y, z) => this.particles.hearts(x, y, z),
+      spawnBaby: (type, x, y, z) => {
+        this.spawnMob(type, x, y, z, undefined, true);
+      },
+      findMate: (self) => {
+        let best: Mob | null = null;
+        let bestD = 8 * 8;
+        for (const m of this.mobs) {
+          if (m === self || m.type !== self.type || m.love <= 0 || m.dying > 0 || m.dead || m.isBaby) continue;
+          const d = m.dist2(self.pos.x, self.pos.y, self.pos.z);
+          if (d < bestD) {
+            bestD = d;
+            best = m;
+          }
+        }
+        return best;
+      },
       mobSound: (type, kind) => this.sound.mob(type, kind),
     };
   }
@@ -286,6 +316,24 @@ export class EntityManager {
       }
     }
 
+    // Falling sand/gravel
+    for (const f of this.falling) {
+      if (!loaded(f.pos.x, f.pos.z)) continue;
+      f.update(dt, this.world);
+      if (f.landed) {
+        const bx = Math.floor(f.pos.x);
+        const by = Math.floor(f.pos.y + 0.02);
+        const bz = Math.floor(f.pos.z);
+        if (blockDef(this.world.getBlockAt(bx, by, bz)).replaceable) {
+          this.world.setBlockAt(bx, by, bz, f.blockId);
+          this.sound.dig(blockDef(f.blockId).sound);
+        } else {
+          // Landing cell occupied (e.g. torch/slab edge): drop as an item.
+          this.dropBlockItems([{ id: f.blockId, count: 1 }], bx, by, bz);
+        }
+      }
+    }
+
     // Mobs
     const ctx = this.mobCtx();
     for (const m of this.mobs) {
@@ -373,17 +421,19 @@ export class EntityManager {
     this.orbs = sweep(this.orbs);
     this.arrows = sweep(this.arrows);
     this.tnts = sweep(this.tnts);
+    this.falling = sweep(this.falling);
     this.mobs = sweep(this.mobs);
   }
 
   clearAll(): void {
-    for (const list of [this.items, this.orbs, this.arrows, this.tnts, this.mobs] as const) {
+    for (const list of [this.items, this.orbs, this.arrows, this.tnts, this.falling, this.mobs] as const) {
       for (const e of list) e.dispose(this.scene);
     }
     this.items = [];
     this.orbs = [];
     this.arrows = [];
     this.tnts = [];
+    this.falling = [];
     this.mobs = [];
   }
 
@@ -393,7 +443,7 @@ export class EntityManager {
     return {
       mobs: this.mobs
         .filter((m) => m.dying === 0)
-        .map((m) => [m.type, +m.pos.x.toFixed(2), +m.pos.y.toFixed(2), +m.pos.z.toFixed(2), m.hp]),
+        .map((m) => [m.type, +m.pos.x.toFixed(2), +m.pos.y.toFixed(2), +m.pos.z.toFixed(2), m.hp, Math.ceil(m.growTimer)]),
       items: this.items.map((e) => [e.stack.id, e.stack.count, e.stack.dur ?? 0, +e.pos.x.toFixed(2), +e.pos.y.toFixed(2), +e.pos.z.toFixed(2)]),
       seeded: [...this.seededChunks],
     };
@@ -403,8 +453,9 @@ export class EntityManager {
     if (!data) return;
     this.seededChunks = new Set(data.seeded ?? []);
     for (const raw of data.mobs ?? []) {
-      const [type, x, y, z, hp] = raw as [MobType, number, number, number, number];
-      this.spawnMob(type, x, y, z, hp);
+      const [type, x, y, z, hp, grow] = raw as [MobType, number, number, number, number, number?];
+      const m = this.spawnMob(type, x, y, z, hp, (grow ?? 0) > 0);
+      if (grow && grow > 0) m.growTimer = grow;
     }
     for (const raw of data.items ?? []) {
       const [id, count, dur, x, y, z] = raw as number[];

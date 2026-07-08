@@ -105,6 +105,9 @@ item(I.Leather, 'Leather');
 item(I.FlintAndSteel, 'Flint and Steel', { maxStack: 1 });
 item(I.Bow, 'Bow', { maxStack: 1 });
 item(I.Arrow, 'Arrow');
+item(I.Bucket, 'Bucket', { maxStack: 16 });
+item(I.WaterBucket, 'Water Bucket', { maxStack: 1 });
+item(I.LavaBucket, 'Lava Bucket', { maxStack: 1, fuel: 1000 });
 
 for (let tier = 0; tier < TOOL_TIERS.length; tier++) {
   for (let kind = 0; kind < TOOL_KINDS.length; kind++) {

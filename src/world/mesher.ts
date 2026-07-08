@@ -192,6 +192,7 @@ export function buildChunkMesh(source: ChunkSource, chunk: Chunk): ChunkMeshData
         const frontFace = def.hasFacing && tiles.front !== undefined
           ? FACING_TO_FACE[padMeta[col + y] & 3]
           : -1;
+        const partial = def.height < 1;
 
         for (let f = 0; f < 6; f++) {
           const face = FACES[f];
@@ -199,7 +200,8 @@ export function buildChunkMesh(source: ChunkSource, chunk: Chunk): ChunkMeshData
           const ny = y + face.dir[1];
           const nz = z + face.dir[2];
           const nb = padBlockAt(nx, ny, nz);
-          if (isOpaqueCube(nb)) continue;
+          // Partial blocks: only the bottom face can be culled by a neighbor.
+          if (isOpaqueCube(nb) && (!partial || f === 3)) continue;
           if (def.cullSame && nb === id) continue;
 
           const tile = f === 2 ? tiles.top : f === 3 ? tiles.bottom : f === frontFace ? tiles.front! : tiles.side;
@@ -233,7 +235,7 @@ export function buildChunkMesh(source: ChunkSource, chunk: Chunk): ChunkMeshData
 
             const u = uv.u0 + (uv.u1 - uv.u0) * c[face.uAxis];
             const v = uv.v0 + (uv.v1 - uv.v0) * c[face.vAxis];
-            idx.push(builder.pushVertex(x + c[0], y + c[1], z + c[2], u, v, sky, blk, ao * face.shade));
+            idx.push(builder.pushVertex(x + c[0], y + c[1] * def.height, z + c[2], u, v, sky, blk, ao * face.shade));
             aoKey.push(ao + sky);
           }
           // Flip the quad diagonal towards the brighter pair to avoid AO anisotropy.

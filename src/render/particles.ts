@@ -134,6 +134,18 @@ export class Particles {
     );
   }
 
+  /** Rising pink hearts (breeding). */
+  hearts(x: number, y: number, z: number): void {
+    for (let i = 0; i < 7; i++) {
+      this.emit(
+        x + (Math.random() - 0.5) * 0.9, y + Math.random() * 0.8, z + (Math.random() - 0.5) * 0.9,
+        (Math.random() - 0.5) * 0.5, 1.2 + Math.random() * 0.8, (Math.random() - 0.5) * 0.5,
+        1, 0.3 + Math.random() * 0.25, 0.45 + Math.random() * 0.25,
+        0.8 + Math.random() * 0.4, -0.5,
+      );
+    }
+  }
+
   splash(x: number, y: number, z: number): void {
     for (let i = 0; i < 12; i++) {
       this.emit(

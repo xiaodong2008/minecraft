@@ -1,4 +1,5 @@
 import { ItemStack, itemDef, canStack, fuelTime, SMELTING } from '../items';
+import { armorId } from '../ids';
 import { matchRecipe } from '../crafting';
 import { Inventory } from '../inventory';
 import { SMELT_TIME, FurnaceState, ChestState } from '../world/world';
@@ -17,6 +18,8 @@ interface SlotSpec {
   result?: boolean;
   /** Called after taking from a result slot (consume inputs, grant xp). */
   onResultTake?(): void;
+  /** Faded silhouette shown while the slot is empty (armor slots). */
+  ghostId?: number;
   el?: HTMLElement;
 }
 
@@ -62,37 +65,43 @@ export class Screens {
    */
   private drag: { button: 0 | 2; slots: SlotSpec[] } | null = null;
 
+  private removeListeners: (() => void)[] = [];
+
   constructor(icons: IconRenderer, inventory: Inventory, hooks: ScreenHooks) {
     this.icons = icons;
     this.inventory = inventory;
     this.hooks = hooks;
 
-    document.addEventListener('mousemove', (e) => {
+    const onMouseMove = (e: MouseEvent): void => {
       this.cursorEl.style.left = `${e.clientX}px`;
       this.cursorEl.style.top = `${e.clientY}px`;
       if (!this.tooltip.classList.contains('hidden')) {
         this.tooltip.style.left = `${e.clientX + 14}px`;
         this.tooltip.style.top = `${e.clientY - 20}px`;
       }
-    });
+    };
 
     // Clicking the dark backdrop with a held stack throws it into the world.
-    this.root.addEventListener('mousedown', (e) => {
+    const onRootDown = (e: MouseEvent): void => {
       if (e.target === this.root && this.cursor) {
-        this.hooks.dropStack({ ...this.cursor });
-        this.cursor = null;
+        const thrown = e.button === 2 && this.cursor.count > 1
+          ? { ...this.cursor, count: 1 }
+          : { ...this.cursor };
+        this.cursor.count -= thrown.count;
+        if (this.cursor.count <= 0) this.cursor = null;
+        this.hooks.dropStack(thrown);
         this.hooks.playClick();
         this.renderAll();
       }
-    });
+    };
 
     // Drag-painting commits on release, wherever the mouse ends up.
-    document.addEventListener('mouseup', () => {
+    const onMouseUp = (): void => {
       if (this.kind && this.drag) this.commitDrag();
-    });
+    };
 
     // Keyboard slot shortcuts while a screen is open.
-    document.addEventListener('keydown', (e) => {
+    const onKeyDown = (e: KeyboardEvent): void => {
       if (!this.kind) return;
       const hov = this.hovered;
       if (!hov || hov.result) return;
@@ -123,7 +132,24 @@ export class Screens {
         this.renderAll();
         e.preventDefault();
       }
-    });
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    this.root.addEventListener('mousedown', onRootDown);
+    document.addEventListener('mouseup', onMouseUp);
+    document.addEventListener('keydown', onKeyDown);
+    this.removeListeners = [
+      () => document.removeEventListener('mousemove', onMouseMove),
+      () => this.root.removeEventListener('mousedown', onRootDown),
+      () => document.removeEventListener('mouseup', onMouseUp),
+      () => document.removeEventListener('keydown', onKeyDown),
+    ];
+  }
+
+  /** Detach document-level listeners (session teardown). */
+  dispose(): void {
+    for (const off of this.removeListeners) off();
+    this.removeListeners = [];
   }
 
   private slotAcceptsHotbar(_i: number, _s: ItemStack): boolean {
@@ -277,7 +303,8 @@ export class Screens {
   }
 
   private buildInventoryScreen(panel: HTMLElement): void {
-    this.title(panel, 'Inventory');
+    // Vanilla's survival inventory has no big title — just the small
+    // "Crafting" label over the 2x2 grid.
     const top = document.createElement('div');
     top.className = 'inv-top';
 
@@ -291,6 +318,7 @@ export class Screens {
         set: (s) => { this.inventory.armor[i] = s; this.inventory.changed(); },
         accepts: (s) => itemDef(s.id).armor?.piece === i,
         group: 'armor',
+        ghostId: armorId(1, i), // iron silhouette, faded via CSS
       }));
     }
 
@@ -378,8 +406,9 @@ export class Screens {
     const spacer = document.createElement('div');
     spacer.style.height = '10px';
     panel.appendChild(spacer);
-    // Vanilla labels the player section in container GUIs.
-    if (this.kind === 'chest' || this.kind === 'furnace') {
+    // Vanilla labels the player section in every container GUI (not the
+    // survival inventory itself).
+    if (this.kind !== 'inventory') {
       const label = document.createElement('div');
       label.className = 'gui-title';
       label.textContent = 'Inventory';
@@ -407,6 +436,19 @@ export class Screens {
   private makeSlotEl(spec: SlotSpec): HTMLElement {
     const el = document.createElement('div');
     el.className = 'gui-slot';
+    if (spec.ghostId !== undefined) {
+      const ghost = this.icons.icon(spec.ghostId);
+      if (ghost) {
+        const g = document.createElement('canvas');
+        g.className = 'ghost';
+        g.width = 32;
+        g.height = 32;
+        const gtx = g.getContext('2d')!;
+        gtx.filter = 'grayscale(1) brightness(0.4)';
+        gtx.drawImage(ghost, 0, 0);
+        el.appendChild(g);
+      }
+    }
     const canvas = document.createElement('canvas');
     canvas.width = 32;
     canvas.height = 32;
@@ -453,6 +495,12 @@ export class Screens {
     el.addEventListener('contextmenu', (e) => e.preventDefault());
     el.addEventListener('mouseenter', (e) => {
       this.hovered = spec;
+      // Shift-drag: sweeping slots with shift+LMB held quick-moves each one.
+      if (e.shiftKey && (e.buttons & 1) !== 0 && !this.cursor && !spec.result && spec.get()) {
+        this.hooks.playClick();
+        this.shiftClick(spec);
+        this.renderAll();
+      }
       // Extend an active drag-paint over newly swept slots.
       if (this.drag && this.cursor) {
         const buttonMask = this.drag.button === 0 ? 1 : 2;
@@ -754,14 +802,16 @@ export class Screens {
 
     for (const spec of this.slots) {
       const el = spec.el!;
-      const canvas = el.querySelector('canvas')!;
+      const canvas = el.querySelector('canvas:not(.ghost)') as HTMLCanvasElement;
       const count = el.querySelector('.count') as HTMLElement;
       const dur = el.querySelector('.dur') as HTMLElement;
+      const ghost = el.querySelector('.ghost') as HTMLElement | null;
       const ctx = canvas.getContext('2d')!;
       ctx.clearRect(0, 0, 32, 32);
 
       const share = shares.get(spec) ?? 0;
       el.classList.toggle('drag-target', share > 0);
+      if (ghost) ghost.style.display = spec.get() ? 'none' : 'block';
 
       const s = spec.get();
       if (s || share > 0) {

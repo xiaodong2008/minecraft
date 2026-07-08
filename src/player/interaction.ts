@@ -16,6 +16,8 @@ export type ContainerKind = 'crafting' | 'furnace' | 'chest';
 
 export interface InteractionEvents {
   onOpenContainer: (kind: ContainerKind, x: number, y: number, z: number) => void;
+  /** Right-clicked a bed: set spawn / sleep through the night. */
+  onUseBed: (x: number, y: number, z: number) => void;
   /** Held-item swing animation triggers. */
   onSwing: () => void;
   onDeny: (reason: string) => void;
@@ -98,8 +100,10 @@ export class Interaction {
     this.target = this.world.raycast(origin, dir, BLOCK_REACH);
 
     if (this.target) {
+      const h = blockDef(this.target.id).height;
       this.highlight.visible = true;
-      this.highlight.position.set(this.target.x + 0.5, this.target.y + 0.5, this.target.z + 0.5);
+      this.highlight.scale.y = h;
+      this.highlight.position.set(this.target.x + 0.5, this.target.y + h * 0.5, this.target.z + 0.5);
     } else {
       this.highlight.visible = false;
     }
@@ -132,7 +136,7 @@ export class Interaction {
         const held = this.inventory.held();
         const dmg = held ? itemDef(held.id).attackDamage : 1;
         const crit = !this.player.onGround && this.player.vel.y < -0.5;
-        mob.hurt(crit ? Math.round(dmg * 1.5) : dmg, this.player.pos.x, this.player.pos.z, this.mobCtxProxy());
+        mob.hurt(crit ? Math.round(dmg * 1.5) : dmg, this.player.pos.x, this.player.pos.z, this.entities.ctx());
         this.particles.damage(mob.pos.x, mob.pos.y + mob.height * 0.6, mob.pos.z);
         this.sound.attackHit();
         this.player.exhaustion += 0.1;
@@ -147,21 +151,6 @@ export class Interaction {
     }
 
     this.updateMining(dt, input);
-  }
-
-  private mobCtxProxy() {
-    // Mob.hurt needs a ctx only for sounds; provide a shim through the manager.
-    return {
-      world: this.world,
-      playerPos: this.player.pos,
-      playerAlive: this.player.alive,
-      sunFactor: 1,
-      hurtPlayer: () => {},
-      shootArrow: () => {},
-      explode: () => {},
-      flame: () => {},
-      mobSound: (type: Parameters<Sound['mob']>[0], kind: Parameters<Sound['mob']>[1]) => this.sound.mob(type, kind),
-    };
   }
 
   private updateMining(dt: number, input: Input): void {
@@ -206,9 +195,11 @@ export class Interaction {
     }
 
     const stage = Math.min(9, Math.floor(this.mineProgress * 10));
+    const ch = blockDef(t.id).height;
     this.crack.visible = this.mineProgress > 0.02;
     this.crack.material = this.crackMats[stage];
-    this.crack.position.set(t.x + 0.5, t.y + 0.5, t.z + 0.5);
+    this.crack.scale.y = ch;
+    this.crack.position.set(t.x + 0.5, t.y + ch * 0.5, t.z + 0.5);
   }
 
   private resetMining(): void {
@@ -286,6 +277,21 @@ export class Interaction {
     const clicked = input.buttonPressed(2);
     if (!clicked && !(input.buttons[2] && this.placeCooldown <= 0)) return;
 
+    // 0) Feed animals (breeding)
+    if (clicked && held) {
+      const mob = this.entities.raycastMob(this.player.eyePosition(), this.player.lookDirection(), ATTACK_REACH);
+      if (mob && !mob.hostile) {
+        const food =
+          (held.id === I.Wheat && (mob.type === 'cow' || mob.type === 'sheep' || mob.type === 'pig')) ||
+          (held.id === I.Seeds && mob.type === 'chicken');
+        if (food && mob.feed(this.entities.ctx())) {
+          this.inventory.take(this.inventory.selected, 1);
+          this.events.onSwing();
+          return;
+        }
+      }
+    }
+
     // 1) Interactive blocks (unless sneaking)
     if (clicked && this.target && !this.player.sneaking) {
       const id = this.target.id;
@@ -307,6 +313,16 @@ export class Interaction {
         this.events.onSwing();
         return;
       }
+      if (id === B.Bed) {
+        this.events.onUseBed(this.target.x, this.target.y, this.target.z);
+        return;
+      }
+    }
+
+    // Buckets
+    if (clicked && held) {
+      if (held.id === I.Bucket && this.scoopLiquid()) return;
+      if ((held.id === I.WaterBucket || held.id === I.LavaBucket) && this.pourBucket(held.id)) return;
     }
 
     if (!held || !heldDef) return;
@@ -379,6 +395,41 @@ export class Interaction {
     }
   }
 
+  /** Empty bucket: pick up the liquid the crosshair points at. */
+  private scoopLiquid(): boolean {
+    const hit = this.world.raycastLiquid(this.player.eyePosition(), this.player.lookDirection(), BLOCK_REACH);
+    if (!hit || !blockDef(hit.id).liquid) return false;
+    const filled = hit.id === B.Water ? I.WaterBucket : I.LavaBucket;
+    this.world.setBlockAt(hit.x, hit.y, hit.z, B.Air);
+    this.inventory.take(this.inventory.selected, 1);
+    const left = this.inventory.add(filled, 1);
+    if (left > 0) {
+      this.entities.dropItem({ id: filled, count: 1 }, this.player.pos.x, this.player.pos.y + 1, this.player.pos.z);
+    }
+    this.sound.splash();
+    this.events.onSwing();
+    return true;
+  }
+
+  /** Filled bucket: pour the liquid against the targeted face. */
+  private pourBucket(bucketId: number): boolean {
+    const t = this.target;
+    if (!t) return false;
+    let px = t.x, py = t.y, pz = t.z;
+    if (!blockDef(t.id).replaceable) {
+      if (t.nx === 0 && t.ny === 0 && t.nz === 0) return false;
+      px += t.nx; py += t.ny; pz += t.nz;
+    }
+    if (!blockDef(this.world.getBlockAt(px, py, pz)).replaceable) return false;
+    const liquid = bucketId === I.WaterBucket ? B.Water : B.Lava;
+    this.world.setBlockAt(px, py, pz, liquid);
+    this.inventory.slots[this.inventory.selected] = { id: I.Bucket, count: 1 };
+    this.inventory.changed();
+    this.sound.splash();
+    this.events.onSwing();
+    return true;
+  }
+
   private shootBow(power: number): void {
     if (this.inventory.removeById(I.Arrow, 1) < 1) return;
     const origin = this.player.eyePosition();
@@ -442,6 +493,17 @@ export class Interaction {
         return below === B.Grass || below === B.Dirt || below === B.Snow;
       case B.Cactus:
         return below === B.Sand || below === B.Cactus;
+      case B.SugarCane: {
+        if (below === B.SugarCane) return true;
+        if (below !== B.Grass && below !== B.Dirt && below !== B.Sand) return false;
+        // Needs water next to the supporting block.
+        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          if (this.world.getBlockAt(x + dx, y - 1, z + dz) === B.Water) return true;
+        }
+        return false;
+      }
+      case B.Bed:
+        return isSolid(below);
       default:
         return true;
     }

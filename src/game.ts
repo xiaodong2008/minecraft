@@ -62,6 +62,7 @@ export class Game {
   private stepDistance = 0;
   private wasInWater = false;
   private deathTimer = 0;
+  private sleeping = false;
 
   private els = {
     hud: document.getElementById('hud')!,
@@ -70,6 +71,7 @@ export class Game {
     loadingText: document.getElementById('loading-text')!,
     vignette: document.getElementById('vignette')!,
     fire: document.getElementById('fire-overlay')!,
+    sleepFade: document.getElementById('sleep-fade')!,
   };
 
   constructor(canvas: HTMLCanvasElement) {
@@ -172,6 +174,7 @@ export class Game {
 
     const interaction = new Interaction(this.scene, world, player, inventory, entities, particles, this.sound, {
       onOpenContainer: (kind, x, y, z) => this.openContainer(kind, x, y, z),
+      onUseBed: (x, y, z) => this.useBed(x, y, z),
       onSwing: () => this.session?.heldItem.swing(),
       onDeny: (reason) => hud.toast(reason),
     });
@@ -188,6 +191,13 @@ export class Game {
     world.onFurnaceFinish = () => this.sound.smeltDone();
     world.onLeafDecay = (x, y, z) => {
       entities.dropBlockItems(blockDef(B.Leaves).drops(Math.random), x, y, z);
+    };
+    world.onGravityBlock = (x, y, z, id) => {
+      world.setBlockAt(x, y, z, B.Air);
+      entities.spawnFallingBlock(x, y, z, id);
+    };
+    world.onSupportBroken = (x, y, z, id) => {
+      entities.dropBlockItems(blockDef(id).drops(Math.random), x, y, z);
     };
 
     // Warm up chunks around the spawn/saved position with a progress bar.
@@ -232,6 +242,7 @@ export class Game {
     if (!this.session) return;
     this.session.entities.clearAll();
     this.session.screens.close();
+    this.session.screens.dispose();
     // Remove every scene child except the camera (chunk meshes, sky, particles, highlights).
     for (const child of [...this.scene.children]) {
       if (child !== this.camera) this.scene.remove(child);
@@ -291,6 +302,7 @@ export class Game {
     };
 
     document.addEventListener('keydown', (e) => {
+      if (e.repeat) return; // holding E must not close a just-opened screen
       if (this.mode === 'screen') {
         if (e.code === 'Escape' || e.code === 'KeyE') {
           this.session?.screens.close();
@@ -302,6 +314,12 @@ export class Game {
       }
       if (this.mode === 'paused' && e.code === 'Escape') {
         this.resume();
+        return;
+      }
+      // Browsers can deny pointer-lock (e.g. requests from the Escape key).
+      // Any key while "playing" unlocked retries, so WASD just works again.
+      if (this.mode === 'playing' && !this.input.locked && this.session) {
+        this.input.requestLock();
       }
     });
 
@@ -323,6 +341,7 @@ export class Game {
       s.screens.open('furnace', s.world.ensureFurnace(x, y, z));
     } else if (kind === 'chest') {
       s.screens.open('chest', s.world.ensureChest(x, y, z));
+      this.sound.step('wood'); // chest lid creak
     } else {
       s.screens.open('crafting');
     }
@@ -334,6 +353,48 @@ export class Game {
     this.input.releaseLock();
     this.setMode('screen');
     s.screens.open('inventory');
+  }
+
+  // ---------------- bed / sleeping ----------------
+
+  private useBed(x: number, y: number, z: number): void {
+    const s = this.session;
+    if (!s || this.sleeping) return;
+
+    // Clicking a bed always (re)sets the respawn point, vanilla style.
+    s.player.spawnPoint.set(x + 0.5, y + 1, z + 0.5);
+
+    const h = Math.sin((s.sky.time - 0.25) * Math.PI * 2);
+    if (h > -0.05) {
+      s.hud.toast('Respawn point set — you can only sleep at night');
+      return;
+    }
+    for (const m of s.entities.mobs) {
+      if (!m.hostile || m.dying > 0) continue;
+      if (m.dist2(s.player.pos.x, s.player.pos.y, s.player.pos.z) < 8 * 8) {
+        s.hud.toast('You may not rest now; there are monsters nearby');
+        return;
+      }
+    }
+
+    // Fade to black, skip to sunrise, fade back in.
+    this.sleeping = true;
+    const fade = this.els.sleepFade;
+    fade.classList.remove('hidden');
+    requestAnimationFrame(() => { fade.style.opacity = '1'; });
+    window.setTimeout(() => {
+      const s2 = this.session;
+      if (s2) {
+        s2.sky.time = 0.25;
+        s2.hud.toast('Respawn point set');
+        this.save();
+      }
+      fade.style.opacity = '0';
+      window.setTimeout(() => {
+        fade.classList.add('hidden');
+        this.sleeping = false;
+      }, 1000);
+    }, 1400);
   }
 
   // ---------------- survival events ----------------

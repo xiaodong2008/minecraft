@@ -50,6 +50,19 @@ export class Inventory {
     return left;
   }
 
+  /** True if `count` items would fit entirely (no partial adds). */
+  canAdd(id: number, count: number, dur?: number): boolean {
+    let left = count;
+    const max = itemDef(id).maxStack;
+    const probe: ItemStack = { id, count: 1, dur };
+    for (let i = 0; i < INV_SIZE && left > 0; i++) {
+      const s = this.slots[i];
+      if (!s) left -= max;
+      else if (max > 1 && canStack(s, probe)) left -= Math.max(0, max - s.count);
+    }
+    return left <= 0;
+  }
+
   /** Removes n items from a slot; clears it at zero. */
   take(slot: number, n: number): void {
     const s = this.slots[slot];

@@ -441,12 +441,16 @@ export class Player {
     const steps = Math.max(1, Math.ceil(dist / maxStep));
     const sdt = dt / steps;
     for (let s = 0; s < steps; s++) {
+      // X/Z run before Y; step-up onto partial blocks needs last step's ground state.
+      this.wasGrounded = this.onGround;
       this.onGround = false;
       this.collideAxis(0, this.vel.x * sdt);
       this.collideAxis(2, this.vel.z * sdt);
       this.collideAxis(1, this.vel.y * sdt);
     }
   }
+
+  private wasGrounded = false;
 
   private collideAxis(axis: 0 | 1 | 2, delta: number): void {
     if (delta === 0) return;
@@ -466,7 +470,18 @@ export class Player {
     for (let bx = minX; bx <= maxX; bx++) {
       for (let by = minY; by <= maxY; by++) {
         for (let bz = minZ; bz <= maxZ; bz++) {
-          if (!this.world.isSolidAt(bx, by, bz)) continue;
+          const h = this.world.solidHeightAt(bx, by, bz);
+          if (h <= 0) continue;
+          if (h < 1) {
+            // Partial block (bed): ignore when the feet are above its top.
+            if (p.y >= by + h - EPS) continue;
+            // Walking into it on the ground: step up like vanilla.
+            if (axis !== 1 && this.wasGrounded && by + h - p.y <= 0.6 &&
+                !this.world.isSolidAt(bx, by + 1, bz)) {
+              p.y = by + h + EPS;
+              continue;
+            }
+          }
           if (axis === 0) {
             if (delta > 0) p.x = bx - HALF_W - EPS;
             else p.x = bx + 1 + HALF_W + EPS;
@@ -475,7 +490,7 @@ export class Player {
             if (delta > 0) {
               p.y = by - height - EPS;
             } else {
-              p.y = by + 1 + EPS;
+              p.y = by + h + EPS;
               this.onGround = true;
             }
             this.vel.y = 0;

@@ -53,6 +53,8 @@ export const B = {
   Wheat7: 47,
   Lava: 48,
   TNT: 49,
+  Bed: 50,
+  SugarCane: 51,
 } as const;
 
 export type BlockId = number;
@@ -89,12 +91,16 @@ export interface BlockDef {
   replaceable: boolean;
   /** Breaks when the block underneath is removed. */
   needsSupport: boolean;
+  /** Falls when unsupported (sand, gravel). */
+  gravity: boolean;
   /** Faces between two blocks of the same id are culled (water, glass, leaves). */
   cullSame: boolean;
   liquid: boolean;
   sound: SoundKind;
   /** Stores facing (front texture towards player at place time). */
   hasFacing: boolean;
+  /** Visual height of the cube, 0..1 (beds, farmland-style partial blocks). */
+  height: number;
   /** Blast resistance (explosions). */
   resistance: number;
   /** What the block drops when mined with a sufficient tool. */
@@ -116,10 +122,12 @@ function def(partial: Partial<BlockDef> & { name: string; tiles: BlockDef['tiles
     harvestLevel: -1,
     replaceable: false,
     needsSupport: false,
+    gravity: false,
     cullSame: false,
     liquid: false,
     sound: 'stone',
     hasFacing: false,
+    height: 1,
     resistance: 6,
     drops: () => [],
     xp: () => 0,
@@ -164,9 +172,9 @@ BLOCKS[B.Leaves] = def({
     return out;
   },
 });
-BLOCKS[B.Sand] = def({ name: 'Sand', tiles: all(TILE.SAND), hardness: 0.5, tool: 'shovel', sound: 'sand' });
+BLOCKS[B.Sand] = def({ name: 'Sand', tiles: all(TILE.SAND), hardness: 0.5, tool: 'shovel', sound: 'sand', gravity: true });
 BLOCKS[B.Gravel] = def({
-  name: 'Gravel', tiles: all(TILE.GRAVEL), hardness: 0.6, tool: 'shovel', sound: 'sand',
+  name: 'Gravel', tiles: all(TILE.GRAVEL), hardness: 0.6, tool: 'shovel', sound: 'sand', gravity: true,
   drops: (rand) => [rand() < 0.1 ? { id: I.Flint, count: 1 } : { id: B.Gravel, count: 1 }],
 });
 BLOCKS[B.Water] = def({
@@ -264,6 +272,14 @@ BLOCKS[B.Lava] = def({
 });
 BLOCKS[B.TNT] = def({
   name: 'TNT', tiles: t(TILE.TNT_TOP, TILE.TNT_BOTTOM, TILE.TNT_SIDE), hardness: 0, sound: 'grass',
+});
+BLOCKS[B.Bed] = def({
+  name: 'Bed', tiles: t(TILE.BED_TOP, TILE.OAK_PLANKS, TILE.BED_SIDE),
+  opacity: 0, hardness: 0.2, sound: 'wool', hasFacing: true, height: 0.5625, needsSupport: true,
+});
+BLOCKS[B.SugarCane] = def({
+  name: 'Sugar Cane', tiles: all(TILE.SUGAR_CANE), render: RENDER_CROSS, opacity: 0,
+  solid: false, hardness: 0, needsSupport: true, sound: 'grass',
 });
 
 // Default drops reference the block's own id.

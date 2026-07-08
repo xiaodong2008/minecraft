@@ -30,6 +30,9 @@ export const I = {
   FlintAndSteel: 281,
   Bow: 282,
   Arrow: 283,
+  Bucket: 284,
+  WaterBucket: 285,
+  LavaBucket: 286,
 } as const;
 
 // Tools: 300 + tier*5 + kind

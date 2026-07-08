@@ -33,7 +33,10 @@ export function moveEntity(
     for (let bx = minX; bx <= maxX; bx++) {
       for (let by = minY; by <= maxY; by++) {
         for (let bz = minZ; bz <= maxZ; bz++) {
-          if (!world.isSolidAt(bx, by, bz)) continue;
+          const h = world.solidHeightAt(bx, by, bz);
+          if (h <= 0) continue;
+          // Partial blocks (beds): no collision when the feet are above the top.
+          if (h < 1 && pos.y >= by + h - EPS) continue;
           if (axis === 0) {
             pos.x = delta > 0 ? bx - halfW - EPS : bx + 1 + halfW + EPS;
             vel.x = 0;
@@ -42,7 +45,7 @@ export function moveEntity(
             if (delta > 0) {
               pos.y = by - height - EPS;
             } else {
-              pos.y = by + 1 + EPS;
+              pos.y = by + h + EPS;
               onGround = true;
             }
             vel.y = 0;

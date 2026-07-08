@@ -72,7 +72,12 @@ export class Input {
 
     document.addEventListener('pointerlockchange', () => {
       this.locked = document.pointerLockElement === this.canvas;
+      if (this.locked && this.relockTimer !== null) {
+        clearTimeout(this.relockTimer);
+        this.relockTimer = null;
+      }
       if (!this.locked) {
+        this.wantLock = false; // user-initiated exit (Esc) must not re-lock
         this.keys.clear();
         this.buttons = [false, false, false];
         this.sprintLatch = false;
@@ -81,11 +86,44 @@ export class Input {
     });
   }
 
+  /** True while we should keep trying to (re)acquire the pointer lock. */
+  private wantLock = false;
+  private relockTimer: ReturnType<typeof setTimeout> | null = null;
+
   requestLock(): void {
-    this.canvas.requestPointerLock();
+    this.wantLock = true;
+    this.tryLock();
+  }
+
+  private tryLock(): void {
+    if (this.locked || !this.wantLock) return;
+    let p: unknown;
+    try {
+      p = this.canvas.requestPointerLock();
+    } catch {
+      this.scheduleRelock();
+      return;
+    }
+    // Chrome enforces a ~1.25s cooldown after exitPointerLock; retry after it.
+    if (p instanceof Promise) {
+      p.catch(() => this.scheduleRelock());
+    }
+  }
+
+  private scheduleRelock(): void {
+    if (this.relockTimer !== null || !this.wantLock) return;
+    this.relockTimer = setTimeout(() => {
+      this.relockTimer = null;
+      this.tryLock();
+    }, 400);
   }
 
   releaseLock(): void {
+    this.wantLock = false;
+    if (this.relockTimer !== null) {
+      clearTimeout(this.relockTimer);
+      this.relockTimer = null;
+    }
     if (this.locked) document.exitPointerLock();
   }
 

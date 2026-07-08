@@ -96,6 +96,38 @@ export class Arrow extends Entity {
   }
 }
 
+/** Falling sand/gravel: block visual that re-solidifies where it lands. */
+export class FallingBlock extends Entity {
+  readonly obj: THREE.Object3D;
+  readonly blockId: number;
+  landed = false;
+
+  constructor(bx: number, by: number, bz: number, blockId: number, obj: THREE.Object3D, scene: THREE.Scene) {
+    super();
+    this.halfW = 0.49;
+    this.height = 0.98;
+    this.blockId = blockId;
+    this.pos.set(bx + 0.5, by, bz + 0.5);
+    this.obj = obj;
+    scene.add(this.obj);
+  }
+
+  update(dt: number, world: World): void {
+    this.age += dt;
+    if (this.age > 30) this.dead = true; // stuck in unloaded space
+    this.applyGravityAndMove(world, dt, 1, 0);
+    this.obj.position.set(this.pos.x, this.pos.y + this.height / 2, this.pos.z);
+    if (this.onGround) {
+      this.landed = true;
+      this.dead = true;
+    }
+  }
+
+  dispose(scene: THREE.Scene): void {
+    scene.remove(this.obj);
+  }
+}
+
 /** Primed TNT: flashing block that explodes after the fuse. */
 export class PrimedTnt extends Entity {
   readonly obj: THREE.Object3D;

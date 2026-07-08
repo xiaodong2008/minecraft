@@ -125,7 +125,45 @@ function wheatStage(stage: number): Painter {
   };
 }
 
+function bedTop(): Painter {
+  return (px, rand) => {
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      // Pillow band at the head end, red blanket below.
+      const border = x === 0 || x === S - 1;
+      if (y < 5) {
+        px(x, y, vary(rand, border ? [190, 190, 194] : [235, 235, 238], 0.04));
+      } else if (y === 5) {
+        px(x, y, vary(rand, [130, 24, 24], 0.06));
+      } else {
+        px(x, y, vary(rand, border ? [142, 28, 28] : [176, 38, 38], 0.06));
+      }
+    }
+  };
+}
+
+function bedSide(): Painter {
+  return (px, rand) => {
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      if (y < 3) px(x, y, vary(rand, x < 4 ? [230, 230, 234] : [176, 38, 38], 0.06));
+      else if (y < 7) px(x, y, vary(rand, [142, 28, 28], 0.06));
+      else px(x, y, vary(rand, WOOD, 0.08));
+    }
+  };
+}
+
 const PAINTERS: Record<number, Painter> = {
+  [TILE.BED_TOP]: bedTop(),
+  [TILE.BED_SIDE]: bedSide(),
+  [TILE.SUGAR_CANE]: (px, rand) => {
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) px(x, y, [0, 0, 0, 0]);
+    for (const cx of [3, 7, 11]) {
+      for (let y = 0; y < S; y++) {
+        const seg = y % 5 === 4;
+        px(cx, y, vary(rand, seg ? [150, 190, 100] : [110, 168, 88], 0.08));
+        px(cx + 1, y, vary(rand, seg ? [140, 180, 92] : [96, 152, 76], 0.08));
+      }
+    }
+  },
   [TILE.GRASS_TOP]: speckle(GRASS, 0.12),
   [TILE.GRASS_SIDE]: grassSide(false),
   [TILE.SNOW_GRASS_SIDE]: grassSide(true),

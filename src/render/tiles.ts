@@ -68,6 +68,9 @@ export const TILE = {
   TNT_TOP: 59,
   TNT_SIDE: 60,
   TNT_BOTTOM: 61,
+  BED_TOP: 62,
+  BED_SIDE: 63,
+  SUGAR_CANE: 64,
 } as const;
 
 export type TileId = number;
