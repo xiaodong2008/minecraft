@@ -226,7 +226,8 @@ export class Player {
       this.starveTimer = 0;
     }
 
-    // Drowning
+    // Drowning — air only drains while the head is submerged and refills
+    // instantly on surfacing (classic vanilla behavior).
     if (this.headInWater) {
       this.air -= dt;
       if (this.air <= 0) {
@@ -237,7 +238,7 @@ export class Player {
         }
       }
     } else {
-      this.air = Math.min(MAX_AIR, this.air + dt * 4);
+      this.air = MAX_AIR;
       this.drownTimer = 0;
     }
 

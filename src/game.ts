@@ -44,6 +44,8 @@ interface Session {
 const SPAWN_X = 8;
 const SPAWN_Z = 8;
 
+const PANORAMA_SEED = 1128;
+
 export class Game {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
@@ -59,6 +61,10 @@ export class Game {
 
   private session: Session | null = null;
   private mode: Mode = 'title';
+
+  /** Slowly rotating live world behind the title menus, vanilla-style. */
+  private panorama: { world: World; sky: Sky; yaw: number } | null = null;
+
   private lastTime = performance.now();
   private fps = 60;
   private debugTimer = 0;
@@ -129,9 +135,47 @@ export class Game {
     requestAnimationFrame(() => this.frame());
   }
 
+  // ---------------- title panorama ----------------
+
+  private ensurePanorama(): void {
+    if (this.panorama || this.session) return;
+    const world = new World(this.scene, this.materials, PANORAMA_SEED, 4);
+    const sky = new Sky(this.scene);
+    sky.time = 0.32; // fixed morning light
+    sky.cycleEnabled = false;
+    this.panorama = { world, sky, yaw: Math.PI * 0.3 };
+  }
+
+  private disposePanorama(): void {
+    if (!this.panorama) return;
+    for (const child of [...this.scene.children]) {
+      if (child === this.camera) continue;
+      this.scene.remove(child);
+      if (child instanceof THREE.Mesh) child.geometry.dispose();
+    }
+    this.panorama = null;
+  }
+
+  /** Streams chunks and renders the slowly orbiting title backdrop. */
+  private renderPanorama(dt: number): void {
+    this.ensurePanorama();
+    const p = this.panorama;
+    if (!p) return;
+    p.world.update(SPAWN_X, SPAWN_Z, 8);
+    p.yaw += dt * 0.025;
+    const y = Math.max(p.world.surfaceYAt(SPAWN_X, SPAWN_Z), 62) + 5;
+    this.camera.position.set(SPAWN_X + 0.5, y, SPAWN_Z + 0.5);
+    this.camera.rotation.set(0, 0, 0);
+    this.camera.rotateY(p.yaw);
+    this.camera.rotateX(-0.16);
+    p.sky.update(dt, this.scene, this.camera, this.materials.shared, p.world.getRenderDistance(), false);
+    this.renderer.render(this.scene, this.camera);
+  }
+
   // ---------------- session lifecycle ----------------
 
   private async startWorld(meta: WorldMeta): Promise<void> {
+    this.disposePanorama();
     this.menus.show(null);
     this.setMode('loading');
     this.els.loading.classList.remove('hidden');
@@ -589,7 +633,8 @@ export class Game {
 
     const s = this.session;
     if (!s) {
-      this.renderer.clear();
+      if (this.mode === 'title') this.renderPanorama(dt);
+      else this.renderer.clear();
       return;
     }
 

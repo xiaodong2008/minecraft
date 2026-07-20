@@ -95,11 +95,12 @@ export class Hud {
       this.renderHotbar();
     }
 
+    const airVisible = player.headInWater || player.air < MAX_AIR - 0.01;
     const statKey = [
       Math.ceil(player.health), Math.floor(player.food), player.armorPoints,
       Math.ceil((player.air / MAX_AIR) * 10), player.level, Math.round(player.xpProgress * 100),
       player.headInWater ? 1 : 0, player.hurtTime > 0.3 ? 1 : 0,
-      player.creative ? 1 : 0,
+      player.creative ? 1 : 0, airVisible ? 1 : 0,
     ].join(',');
     if (statKey !== this.lastStats) {
       this.lastStats = statKey;
