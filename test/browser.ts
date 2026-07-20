@@ -826,6 +826,47 @@ async function main(): Promise<void> {
     errors.push(`air bar did not hide on land: ${JSON.stringify(airOnLand)}`);
   }
 
+  // --- Save & reload: quit to title, load the same world from the list
+  await page.evaluate((stoneId) => {
+    const g = (window as any).game;
+    const s = g.session;
+    s.inventory.clear();
+    s.inventory.add(stoneId, 42);
+    g.quitToTitle();
+  }, B.Stone);
+  await sleep(600);
+  const atTitle = await page.evaluate(() => ({
+    mode: (window as any).game.mode,
+    hasSession: !!(window as any).game.session,
+  }));
+  if (atTitle.mode !== 'title' || atTitle.hasSession) {
+    errors.push(`quit to title failed: ${JSON.stringify(atTitle)}`);
+  }
+  await page.click('#btn-singleplayer');
+  await sleep(300);
+  await page.click('#world-list .world-row');
+  await sleep(200);
+  await page.click('#btn-world-play');
+  try {
+    await page.waitForSelector('#menu-pause:not(.hidden)', { timeout: 60_000 });
+  } catch {
+    errors.push('reloading the saved world never reached the pause menu (stuck loading)');
+  }
+  await sleep(300);
+  const reloaded = await page.evaluate((stoneId) => {
+    const g = (window as any).game;
+    return {
+      mode: g.mode,
+      stone: g.session?.inventory.countOf(stoneId) ?? -1,
+      chunks: g.session?.world.chunkCount() ?? 0,
+    };
+  }, B.Stone);
+  console.log('  save/reload:', JSON.stringify(reloaded));
+  if (reloaded.mode !== 'paused' || reloaded.stone !== 42 || reloaded.chunks < 25) {
+    errors.push(`saved world reload failed: ${JSON.stringify(reloaded)}`);
+  }
+  await shot('17-reloaded-world');
+
   await browser.close();
 
   const realErrors = errors.filter((e) => !e.includes('favicon') && !e.includes('Failed to load resource'));
