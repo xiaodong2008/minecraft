@@ -250,7 +250,11 @@ export class Interaction {
     this.sound.dig(def.sound);
     this.particles.blockBurst(t.x, t.y, t.z, t.id);
 
-    if (canHarvest) {
+    if (held?.id === I.Shears && t.id === B.Leaves) {
+      // Shears harvest the leaf block itself.
+      this.entities.dropBlockItems([{ id: B.Leaves, count: 1 }], t.x, t.y, t.z);
+      if (!this.player.creative && this.inventory.damageHeld(1)) this.sound.toolBreak();
+    } else if (canHarvest) {
       this.entities.dropBlockItems(def.drops(Math.random), t.x, t.y, t.z);
       const xp = def.xp(Math.random);
       if (xp > 0) this.entities.spawnXp(xp, t.x + 0.5, t.y + 0.5, t.z + 0.5);
@@ -286,7 +290,14 @@ export class Interaction {
         if (Math.random() < dt * 8) this.sound.eat();
         if (this.useTime >= 1.6 && held && heldDef?.food) {
           this.player.eat(heldDef.food.hunger, heldDef.food.saturation, heldDef.food.heals ?? 0);
+          const wasMilk = held.id === I.MilkBucket;
           this.inventory.take(this.inventory.selected, 1);
+          if (wasMilk) {
+            const left = this.inventory.add(I.Bucket, 1);
+            if (left > 0) {
+              this.entities.dropItem({ id: I.Bucket, count: 1 }, this.player.pos.x, this.player.pos.y + 1, this.player.pos.z);
+            }
+          }
           this.sound.burp();
           this.usingKind = null;
           this.useTime = 0;
@@ -301,12 +312,29 @@ export class Interaction {
     const clicked = input.buttonPressed(2);
     if (!clicked && !(input.buttons[2] && this.placeCooldown <= 0)) return;
 
-    // 0) Feed animals (breeding)
+    // 0) Mob interactions: shearing, milking, feeding (breeding)
     if (clicked && held) {
       const mob = this.entities.raycastMob(this.player.eyePosition(), this.player.lookDirection(), ATTACK_REACH);
       if (mob && !mob.hostile) {
+        if (held.id === I.Shears && mob.type === 'sheep') {
+          if (mob.shear(this.entities.ctx())) {
+            if (!this.player.creative && this.inventory.damageHeld(1)) this.sound.toolBreak();
+            this.events.onSwing();
+          }
+          return;
+        }
+        if (held.id === I.Bucket && mob.type === 'cow' && !mob.isBaby) {
+          if (!this.player.creative) this.inventory.take(this.inventory.selected, 1);
+          const left = this.inventory.add(I.MilkBucket, 1);
+          if (left > 0) {
+            this.entities.dropItem({ id: I.MilkBucket, count: 1 }, this.player.pos.x, this.player.pos.y + 1, this.player.pos.z);
+          }
+          this.events.onSwing();
+          return;
+        }
         const food =
           (held.id === I.Wheat && (mob.type === 'cow' || mob.type === 'sheep' || mob.type === 'pig')) ||
+          ((held.id === I.Carrot || held.id === I.Potato) && mob.type === 'pig') ||
           (held.id === I.Seeds && mob.type === 'chicken');
         if (food && mob.feed(this.entities.ctx())) {
           this.inventory.take(this.inventory.selected, 1);
@@ -335,6 +363,7 @@ export class Interaction {
         this.world.setBlockAt(this.target.x, this.target.y, this.target.z, B.Air);
         this.entities.primeTnt(this.target.x, this.target.y, this.target.z);
         this.events.onSwing();
+        if (!this.player.creative && this.inventory.damageHeld(1)) this.sound.toolBreak();
         return;
       }
       if (id === B.Bed) {
@@ -351,14 +380,27 @@ export class Interaction {
 
     if (!held || !heldDef) return;
 
-    // 2) Food — holding right-click keeps eating (vanilla)
-    if (heldDef.food && this.player.food < 20 && (clicked || input.buttons[2])) {
+    // 2) Plant crops on farmland — before food, since carrots/potatoes are both
+    if (clicked && this.target && heldDef.plantsCrop !== undefined &&
+        (this.target.id === B.Farmland || this.target.id === B.FarmlandWet) && this.target.ny === 1) {
+      const t = this.target;
+      if (this.world.getBlockAt(t.x, t.y + 1, t.z) === B.Air) {
+        this.world.setBlockAt(t.x, t.y + 1, t.z, heldDef.plantsCrop);
+        if (!this.player.creative) this.inventory.take(this.inventory.selected, 1);
+        this.sound.place('grass');
+        this.events.onSwing();
+      }
+      return;
+    }
+
+    // 3) Food — holding right-click keeps eating (milk is drinkable even when full)
+    if (heldDef.food && (this.player.food < 20 || held.id === I.MilkBucket) && (clicked || input.buttons[2])) {
       this.usingKind = 'eat';
       this.useTime = 0;
       return;
     }
 
-    // 3) Bow — holding right-click starts drawing again after a shot
+    // 4) Bow — holding right-click starts drawing again after a shot
     if (held.id === I.Bow && (clicked || input.buttons[2])) {
       if (this.inventory.countOf(I.Arrow) > 0 || this.player.creative) {
         this.usingKind = 'bow';
@@ -369,7 +411,19 @@ export class Interaction {
       return;
     }
 
-    // 4) Tool interactions on the targeted block
+    // 5) Throw an egg
+    if (held.id === I.Egg && clicked) {
+      const origin = this.player.eyePosition();
+      const dir = this.player.lookDirection();
+      this.entities.throwEgg(
+        origin.x + dir.x * 0.3, origin.y + dir.y * 0.3 - 0.05, origin.z + dir.z * 0.3, dir, 17,
+      );
+      if (!this.player.creative) this.inventory.take(this.inventory.selected, 1);
+      this.events.onSwing();
+      return;
+    }
+
+    // 6) Tool interactions on the targeted block
     if (this.target && clicked) {
       const t = this.target;
       const tool = heldDef.tool;
@@ -380,16 +434,6 @@ export class Interaction {
         this.sound.dig('dirt');
         this.events.onSwing();
         if (!this.player.creative && this.inventory.damageHeld(1)) this.sound.toolBreak();
-        return;
-      }
-
-      if (heldDef.plantsCrop !== undefined && (t.id === B.Farmland || t.id === B.FarmlandWet) && t.ny === 1) {
-        if (this.world.getBlockAt(t.x, t.y + 1, t.z) === B.Air) {
-          this.world.setBlockAt(t.x, t.y + 1, t.z, heldDef.plantsCrop);
-          if (!this.player.creative) this.inventory.take(this.inventory.selected, 1);
-          this.sound.place('grass');
-          this.events.onSwing();
-        }
         return;
       }
 
@@ -420,7 +464,7 @@ export class Interaction {
       }
     }
 
-    // 5) Place a block
+    // 7) Place a block
     if (held.id < 256) {
       this.placeBlock(held);
     }

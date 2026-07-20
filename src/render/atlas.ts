@@ -76,6 +76,17 @@ function planksBase(px: (x: number, y: number, c: RGBA) => void, rand: () => num
   }
 }
 
+function cobbleBase(px: (x: number, y: number, c: RGBA) => void, rand: () => number): void {
+  const shades: number[][] = [];
+  for (let cy = 0; cy < 4; cy++) { shades[cy] = []; for (let cx = 0; cx < 4; cx++) shades[cy][cx] = 0.75 + rand() * 0.4; }
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const border = x % 4 === 0 || y % 4 === 0;
+    const f = border ? 0.5 : shades[y >> 2][x >> 2];
+    const c = vary(rand, STONE, 0.06);
+    px(x, y, [c[0] * f, c[1] * f, c[2] * f, 255]);
+  }
+}
+
 function furnaceBase(px: (x: number, y: number, c: RGBA) => void, rand: () => number): void {
   const shades: number[][] = [];
   for (let cy = 0; cy < 4; cy++) { shades[cy] = []; for (let cx = 0; cx < 4; cx++) shades[cy][cx] = 0.8 + rand() * 0.3; }
@@ -122,6 +133,65 @@ function wheatStage(stage: number): Painter {
         if (stage >= 5 && k > h - 5 && rand() < 0.5) px(x + (rand() < 0.5 ? 1 : -1), y, vary(rand, gold, 0.12));
       }
     }
+  };
+}
+
+function carrotsStage(stage: number): Painter {
+  const heights = [3, 5, 8, 10];
+  const h = heights[stage];
+  return (px, rand) => {
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) px(x, y, [0, 0, 0, 0]);
+    for (let b = 0; b < 5; b++) {
+      const x = 2 + b * 3;
+      for (let k = 0; k < h; k++) {
+        const y = S - 1 - k;
+        px(x, y, vary(rand, [48, 138, 38], 0.15));
+        // Feathery side leaves
+        if (k >= 1 && rand() < 0.55) px(x + (rand() < 0.5 ? 1 : -1), y, vary(rand, [70, 160, 52], 0.15));
+      }
+      // Orange roots peeking out of the soil at later stages.
+      if (stage >= 2) {
+        px(x, S - 1, vary(rand, [232, 130, 40], 0.1));
+        if (stage === 3) {
+          px(x - 1, S - 1, vary(rand, [214, 116, 34], 0.1));
+          px(x + 1, S - 1, vary(rand, [214, 116, 34], 0.1));
+        }
+      }
+    }
+  };
+}
+
+function potatoesStage(stage: number): Painter {
+  const heights = [3, 5, 7, 9];
+  const h = heights[stage];
+  const green: readonly [number, number, number] = stage === 3 ? [104, 152, 54] : [58, 140, 44];
+  return (px, rand) => {
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) px(x, y, [0, 0, 0, 0]);
+    for (let b = 0; b < 4; b++) {
+      const x = 2 + b * 4;
+      for (let k = 0; k < h; k++) {
+        const y = S - 1 - k;
+        px(x, y, vary(rand, green, 0.14));
+        // Bushy: widen the clump as it grows
+        if (rand() < 0.7) px(x + 1, y, vary(rand, green, 0.14));
+        if (stage >= 2 && rand() < 0.4) px(x + (rand() < 0.5 ? 2 : -1), y, vary(rand, green, 0.16));
+      }
+    }
+  };
+}
+
+function pumpkinFace(lit: boolean): Painter {
+  return (px, rand) => {
+    PAINTERS[TILE.PUMPKIN_SIDE](px, rand);
+    const glow: RGBA = lit ? [255, 224, 92, 255] : [46, 28, 12, 255];
+    // Triangle eyes
+    px(4, 5, glow); px(11, 5, glow);
+    for (let x = 3; x <= 5; x++) px(x, 6, glow);
+    for (let x = 10; x <= 12; x++) px(x, 6, glow);
+    // Jagged grin
+    for (let x = 3; x <= 12; x++) px(x, 10, glow);
+    px(3, 9, glow); px(6, 9, glow); px(9, 9, glow); px(12, 9, glow);
+    px(4, 11, glow); px(5, 11, glow); px(8, 11, glow); px(10, 11, glow); px(11, 11, glow);
   };
 }
 
@@ -179,14 +249,17 @@ const PAINTERS: Record<number, Painter> = {
       }
     }
   },
-  [TILE.COBBLE]: (px, rand) => {
-    const shades: number[][] = [];
-    for (let cy = 0; cy < 4; cy++) { shades[cy] = []; for (let cx = 0; cx < 4; cx++) shades[cy][cx] = 0.75 + rand() * 0.4; }
-    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
-      const border = x % 4 === 0 || y % 4 === 0;
-      const f = border ? 0.5 : shades[y >> 2][x >> 2];
-      const c = vary(rand, STONE, 0.06);
-      px(x, y, [c[0] * f, c[1] * f, c[2] * f, 255]);
+  [TILE.COBBLE]: cobbleBase,
+  [TILE.MOSSY_COBBLE]: (px, rand) => {
+    cobbleBase(px, rand);
+    // Moss creeping over the stones in small blobs.
+    for (let b = 0; b < 6; b++) {
+      const cx = 1 + Math.floor(rand() * 14);
+      const cy = 1 + Math.floor(rand() * 14);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -2; dx <= 2; dx++) {
+        if (Math.abs(dx) + Math.abs(dy) > 2 || rand() < 0.35) continue;
+        px(cx + dx, cy + dy, vary(rand, [92, 138, 58], 0.14));
+      }
     }
   },
   [TILE.BEDROCK]: (px, rand) => {
@@ -268,6 +341,79 @@ const PAINTERS: Record<number, Painter> = {
   [TILE.IRON_ORE]: oreTile([216, 175, 147]),
   [TILE.GOLD_ORE]: oreTile([252, 216, 80]),
   [TILE.DIAMOND_ORE]: oreTile([98, 230, 222]),
+  [TILE.LAPIS_ORE]: oreTile([48, 96, 208]),
+  [TILE.LAPIS_BLOCK]: (px, rand) => {
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const fleck = rand();
+      const c: readonly [number, number, number] =
+        fleck < 0.08 ? [104, 138, 228] : fleck < 0.16 ? [26, 44, 116] : [40, 68, 164];
+      px(x, y, vary(rand, c, 0.07));
+    }
+  },
+  [TILE.CLAY]: speckle([158, 164, 178], 0.05),
+  [TILE.STONE_SLAB]: (px, rand) => {
+    // Smooth stone: lighter than raw stone, subtle horizontal grain.
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const band = y % 8 === 7 ? 0.9 : 1;
+      const c = vary(rand, [152, 152, 152], 0.04);
+      px(x, y, [c[0] * band, c[1] * band, c[2] * band, 255]);
+    }
+  },
+  [TILE.MELON_SIDE]: (px, rand) => {
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const stripe = x % 4 < 2;
+      px(x, y, vary(rand, stripe ? [96, 150, 40] : [62, 110, 30], 0.07));
+    }
+  },
+  [TILE.MELON_TOP]: (px, rand) => {
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const blotch = hash2(x >> 1, y >> 1, 91) > 0.5;
+      px(x, y, vary(rand, blotch ? [96, 150, 40] : [62, 110, 30], 0.07));
+    }
+  },
+  [TILE.PUMPKIN_SIDE]: (px, rand) => {
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const rib = x % 4 === 0;
+      const c = vary(rand, [214, 124, 30], 0.07);
+      const f = rib ? 0.76 : y < 2 || y > 13 ? 0.9 : 1;
+      px(x, y, [c[0] * f, c[1] * f, c[2] * f, 255]);
+    }
+  },
+  [TILE.PUMPKIN_TOP]: (px, rand) => {
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const d = Math.max(Math.abs(x - 7.5), Math.abs(y - 7.5));
+      const rib = ((x + y) & 3) === 0;
+      const c = vary(rand, d > 6.5 ? [168, 92, 22] : [222, 134, 38], 0.06);
+      const f = rib ? 0.85 : 1;
+      px(x, y, [c[0] * f, c[1] * f, c[2] * f, 255]);
+    }
+    // Curled stem
+    for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) px(7 + dx, 7 + dy, vary(rand, [96, 112, 40], 0.1));
+    px(9, 6, [76, 92, 34, 255]);
+  },
+  [TILE.PUMPKIN_FACE]: pumpkinFace(false),
+  [TILE.PUMPKIN_FACE_LIT]: pumpkinFace(true),
+  [TILE.BOOKSHELF]: (px, rand) => {
+    planksBase(px, rand);
+    const spines: readonly [number, number, number][] = [
+      [172, 50, 44], [58, 96, 168], [70, 140, 60], [198, 162, 60], [130, 70, 150], [154, 154, 158],
+    ];
+    for (const y0 of [2, 9]) {
+      // Dark recess with a row of books
+      for (let x = 1; x <= 14; x++) for (let y = y0; y < y0 + 5; y++) px(x, y, [42, 30, 18, 255]);
+      let x = 1;
+      while (x <= 14) {
+        const w = 1 + ((rand() * 2) | 0);
+        const c = spines[(rand() * spines.length) | 0];
+        const bh = rand() < 0.3 ? 4 : 5;
+        for (let dx = 0; dx < w && x + dx <= 14; dx++) {
+          for (let k = 0; k < bh; k++) px(x + dx, y0 + 4 - k, vary(rand, c, 0.08));
+        }
+        x += w;
+        if (rand() < 0.12) x += 1;
+      }
+    }
+  },
   [TILE.GLOWSTONE]: (px, rand) => {
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
       const bright = hash2(x >> 2, y >> 2, 7) > 0.5;
@@ -467,6 +613,10 @@ const PAINTERS: Record<number, Painter> = {
 
 for (let stage = 0; stage < 8; stage++) {
   PAINTERS[TILE.WHEAT_0 + stage] = wheatStage(stage);
+}
+for (let stage = 0; stage < 4; stage++) {
+  PAINTERS[TILE.CARROTS_0 + stage] = carrotsStage(stage);
+  PAINTERS[TILE.POTATOES_0 + stage] = potatoesStage(stage);
 }
 
 export interface Atlas {

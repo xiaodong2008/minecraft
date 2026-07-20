@@ -108,12 +108,29 @@ item(I.String, 'String');
 item(I.Bone, 'Bone');
 item(I.BoneMeal, 'Bone Meal');
 item(I.Leather, 'Leather');
-item(I.FlintAndSteel, 'Flint and Steel', { maxStack: 1 });
+item(I.FlintAndSteel, 'Flint and Steel', { maxStack: 1, durability: 64 });
 item(I.Bow, 'Bow', { maxStack: 1 });
 item(I.Arrow, 'Arrow');
 item(I.Bucket, 'Bucket', { maxStack: 16 });
 item(I.WaterBucket, 'Water Bucket', { maxStack: 1 });
 item(I.LavaBucket, 'Lava Bucket', { maxStack: 1, fuel: 1000 });
+// Drinking milk hands the empty bucket back (special-cased in interaction).
+item(I.MilkBucket, 'Milk Bucket', { maxStack: 1, food: { hunger: 0, saturation: 0 } });
+item(I.Shears, 'Shears', { maxStack: 1, durability: 238 });
+item(I.Egg, 'Egg', { maxStack: 16 });
+item(I.Carrot, 'Carrot', { food: { hunger: 3, saturation: 3.6 }, plantsCrop: B.Carrots0 });
+item(I.Potato, 'Potato', { food: { hunger: 1, saturation: 0.6 }, plantsCrop: B.Potatoes0 });
+item(I.BakedPotato, 'Baked Potato', { food: { hunger: 5, saturation: 6 } });
+item(I.GoldenApple, 'Golden Apple', { food: { hunger: 4, saturation: 9.6, heals: 4 } });
+item(I.Sugar, 'Sugar');
+item(I.Cookie, 'Cookie', { food: { hunger: 2, saturation: 0.4 } });
+item(I.MelonSlice, 'Melon Slice', { food: { hunger: 2, saturation: 1.2 } });
+item(I.Paper, 'Paper');
+item(I.Book, 'Book');
+item(I.ClayBall, 'Clay Ball');
+item(I.BrickItem, 'Brick');
+item(I.LapisLazuli, 'Lapis Lazuli');
+item(I.GreenDye, 'Green Dye');
 
 for (let tier = 0; tier < TOOL_TIERS.length; tier++) {
   for (let kind = 0; kind < TOOL_KINDS.length; kind++) {
@@ -155,6 +172,8 @@ const BLOCK_FUEL: Record<number, number> = {
   [B.CraftingTable]: 15,
   [B.Chest]: 15,
   [B.Sapling]: 5,
+  [B.OakSlab]: 7.5,
+  [B.Bookshelf]: 15,
 };
 
 export function isBlockItem(id: number): boolean {
@@ -191,6 +210,9 @@ export const SMELTING: Record<number, SmeltResult> = {
   [I.BeefRaw]: { out: I.Steak, xp: 0.35 },
   [I.ChickenRaw]: { out: I.ChickenCooked, xp: 0.35 },
   [I.MuttonRaw]: { out: I.MuttonCooked, xp: 0.35 },
+  [I.Potato]: { out: I.BakedPotato, xp: 0.35 },
+  [I.ClayBall]: { out: I.BrickItem, xp: 0.3 },
+  [B.Cactus]: { out: I.GreenDye, xp: 1 },
 };
 
 /** Technical blocks hidden from the creative picker (crop stages, lit variants...). */
@@ -198,6 +220,8 @@ const HIDDEN_BLOCKS = new Set<number>([
   B.FurnaceLit, B.Farmland, B.FarmlandWet,
   B.Wheat0, B.Wheat0 + 1, B.Wheat0 + 2, B.Wheat0 + 3,
   B.Wheat0 + 4, B.Wheat0 + 5, B.Wheat0 + 6, B.Wheat0 + 7,
+  B.Carrots0, B.Carrots0 + 1, B.Carrots0 + 2, B.Carrots0 + 3,
+  B.Potatoes0, B.Potatoes0 + 1, B.Potatoes0 + 2, B.Potatoes0 + 3,
 ]);
 
 /**

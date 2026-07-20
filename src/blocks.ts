@@ -55,6 +55,25 @@ export const B = {
   TNT: 49,
   Bed: 50,
   SugarCane: 51,
+  Carrots0: 52,
+  Carrots1: 53,
+  Carrots2: 54,
+  Carrots3: 55,
+  Potatoes0: 56,
+  Potatoes1: 57,
+  Potatoes2: 58,
+  Potatoes3: 59,
+  Melon: 60,
+  Pumpkin: 61,
+  JackOLantern: 62,
+  OakSlab: 63,
+  CobbleSlab: 64,
+  StoneSlab: 65,
+  Bookshelf: 66,
+  MossyCobblestone: 67,
+  Clay: 68,
+  LapisOre: 69,
+  LapisBlock: 70,
 } as const;
 
 export type BlockId = number;
@@ -286,6 +305,70 @@ BLOCKS[B.Bed] = def({
 BLOCKS[B.SugarCane] = def({
   name: 'Sugar Cane', tiles: all(TILE.SUGAR_CANE), render: RENDER_CROSS, opacity: 0,
   solid: false, hardness: 0, needsSupport: true, sound: 'grass',
+});
+// Carrot/potato crops: 4 visual stages, final stage yields 2-4 of the crop.
+for (let stage = 0; stage < 4; stage++) {
+  BLOCKS[B.Carrots0 + stage] = def({
+    name: 'Carrots', tiles: all(TILE.CARROTS_0 + stage), render: RENDER_CROSS, opacity: 0,
+    solid: false, hardness: 0, needsSupport: true, sound: 'grass', crop: true,
+    growsTo: stage < 3 ? B.Carrots0 + stage + 1 : undefined,
+    drops: stage === 3
+      ? (rand) => [{ id: I.Carrot, count: 2 + Math.floor(rand() * 3) }]
+      : () => [{ id: I.Carrot, count: 1 }],
+  });
+  BLOCKS[B.Potatoes0 + stage] = def({
+    name: 'Potatoes', tiles: all(TILE.POTATOES_0 + stage), render: RENDER_CROSS, opacity: 0,
+    solid: false, hardness: 0, needsSupport: true, sound: 'grass', crop: true,
+    growsTo: stage < 3 ? B.Potatoes0 + stage + 1 : undefined,
+    drops: stage === 3
+      ? (rand) => [{ id: I.Potato, count: 2 + Math.floor(rand() * 3) }]
+      : () => [{ id: I.Potato, count: 1 }],
+  });
+}
+BLOCKS[B.Melon] = def({
+  name: 'Melon', tiles: t(TILE.MELON_TOP, TILE.MELON_TOP, TILE.MELON_SIDE),
+  hardness: 1, tool: 'axe', sound: 'wood',
+  drops: (rand) => [{ id: I.MelonSlice, count: 3 + Math.floor(rand() * 5) }],
+});
+BLOCKS[B.Pumpkin] = def({
+  name: 'Pumpkin', tiles: t(TILE.PUMPKIN_TOP, TILE.PUMPKIN_TOP, TILE.PUMPKIN_SIDE, TILE.PUMPKIN_FACE),
+  hardness: 1, tool: 'axe', sound: 'wood', hasFacing: true,
+});
+BLOCKS[B.JackOLantern] = def({
+  name: "Jack o'Lantern", tiles: t(TILE.PUMPKIN_TOP, TILE.PUMPKIN_TOP, TILE.PUMPKIN_SIDE, TILE.PUMPKIN_FACE_LIT),
+  hardness: 1, tool: 'axe', sound: 'wood', hasFacing: true, emission: 15,
+});
+BLOCKS[B.OakSlab] = def({
+  name: 'Oak Slab', tiles: all(TILE.OAK_PLANKS), opacity: 0, height: 0.5,
+  hardness: 2, tool: 'axe', sound: 'wood',
+});
+BLOCKS[B.CobbleSlab] = def({
+  name: 'Cobblestone Slab', tiles: all(TILE.COBBLE), opacity: 0, height: 0.5,
+  hardness: 2, tool: 'pickaxe', harvestLevel: 0,
+});
+BLOCKS[B.StoneSlab] = def({
+  name: 'Stone Slab', tiles: all(TILE.STONE_SLAB), opacity: 0, height: 0.5,
+  hardness: 2, tool: 'pickaxe', harvestLevel: 0,
+});
+BLOCKS[B.Bookshelf] = def({
+  name: 'Bookshelf', tiles: t(TILE.OAK_PLANKS, TILE.OAK_PLANKS, TILE.BOOKSHELF),
+  hardness: 1.5, tool: 'axe', sound: 'wood',
+  drops: () => [{ id: I.Book, count: 3 }],
+});
+BLOCKS[B.MossyCobblestone] = def({
+  name: 'Mossy Cobblestone', tiles: all(TILE.MOSSY_COBBLE), hardness: 2, tool: 'pickaxe', harvestLevel: 0,
+});
+BLOCKS[B.Clay] = def({
+  name: 'Clay', tiles: all(TILE.CLAY), hardness: 0.6, tool: 'shovel', sound: 'sand',
+  drops: () => [{ id: I.ClayBall, count: 4 }],
+});
+BLOCKS[B.LapisOre] = def({
+  name: 'Lapis Lazuli Ore', tiles: all(TILE.LAPIS_ORE), hardness: 3, tool: 'pickaxe', harvestLevel: 1,
+  drops: (rand) => [{ id: I.LapisLazuli, count: 4 + Math.floor(rand() * 5) }],
+  xp: (r) => 2 + Math.floor(r() * 4),
+});
+BLOCKS[B.LapisBlock] = def({
+  name: 'Lapis Lazuli Block', tiles: all(TILE.LAPIS_BLOCK), hardness: 3, tool: 'pickaxe', harvestLevel: 1,
 });
 
 // Default drops reference the block's own id.

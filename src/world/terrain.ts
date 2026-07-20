@@ -25,6 +25,7 @@ export class Terrain {
   private readonly caveNoiseB: Simplex3;
   private readonly oreNoiseA: Simplex3;
   private readonly oreNoiseB: Simplex3;
+  private readonly oreNoiseC: Simplex3;
 
   constructor(seed: number) {
     this.seed = seed >>> 0;
@@ -39,6 +40,7 @@ export class Terrain {
     this.caveNoiseB = new Simplex3(this.seed ^ 0x2222);
     this.oreNoiseA = new Simplex3(this.seed ^ 0x3333);
     this.oreNoiseB = new Simplex3(this.seed ^ 0x4444);
+    this.oreNoiseC = new Simplex3(this.seed ^ 0x5555);
   }
 
   /** Terrain surface height (top solid block y) at world column (x, z). Deterministic. */
@@ -109,8 +111,12 @@ export class Terrain {
           if (y < bedrockDepth) {
             id = B.Bedrock;
           } else if (y > h - 4 && h <= SEA_LEVEL + 1) {
-            // sea floor / beaches
-            id = hash2(wx ^ y, wz, this.seed ^ 0xf10) < 0.35 ? B.Gravel : B.Sand;
+            // sea floor / beaches, with occasional clay pods just under the water
+            if (h <= SEA_LEVEL && y >= h - 2 && hash2(wx >> 2, wz >> 2, this.seed ^ 0xc1ae) < 0.07) {
+              id = B.Clay;
+            } else {
+              id = hash2(wx ^ y, wz, this.seed ^ 0xf10) < 0.35 ? B.Gravel : B.Sand;
+            }
           } else if (y === h) {
             id = biome === 'desert' ? B.Sand : biome === 'snow' ? B.Snow : B.Grass;
           } else if (y > h - 4) {
@@ -169,6 +175,8 @@ export class Terrain {
     const b = this.oreNoiseB.noise(x * 0.16, y * 0.16, z * 0.16);
     if (b > 0.8 && y < 30) return B.GoldOre;
     if (b < -0.81 && y < 18) return B.DiamondOre;
+    const c = this.oreNoiseC.noise(x * 0.16, y * 0.16, z * 0.16);
+    if (c > 0.78 && y < 32) return B.LapisOre;
     return null;
   }
 
@@ -205,6 +213,11 @@ export class Terrain {
           chunk.setBlock(lx, h + 1, lz, B.TallGrass);
         } else if (r < 0.072) {
           chunk.setBlock(lx, h + 1, lz, hash2(wx, wz, this.seed ^ 0x1357) < 0.5 ? B.Dandelion : B.Poppy);
+        } else if (r < 0.0724) {
+          // Very rare wild pumpkins and melons
+          chunk.setBlock(lx, h + 1, lz, B.Pumpkin);
+        } else if (r < 0.0728) {
+          chunk.setBlock(lx, h + 1, lz, B.Melon);
         }
       }
     }

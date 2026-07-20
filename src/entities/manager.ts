@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ItemEntity, XpOrb } from './itemdrop';
-import { Arrow, ArrowHitTarget, PrimedTnt, FallingBlock } from './projectiles';
+import { Arrow, ArrowHitTarget, PrimedTnt, FallingBlock, ThrownEgg } from './projectiles';
 import { Mob, MobCtx } from './mob';
 import { MobType } from '../render/mobmodels';
 import { makeItemObject } from '../render/itemmesh';
@@ -29,6 +29,7 @@ export class EntityManager {
   items: ItemEntity[] = [];
   orbs: XpOrb[] = [];
   arrows: Arrow[] = [];
+  eggs: ThrownEgg[] = [];
   tnts: PrimedTnt[] = [];
   falling: FallingBlock[] = [];
   mobs: Mob[] = [];
@@ -104,6 +105,17 @@ export class EntityManager {
   shootArrow(x: number, y: number, z: number, dir: THREE.Vector3, speed: number, damage: number, fromPlayer: boolean): void {
     this.arrows.push(new Arrow(x, y, z, dir, speed, damage, fromPlayer, this.scene));
     this.sound.bow();
+  }
+
+  /** Player-thrown egg: shatters on impact with a 1/8 chance of a baby chicken. */
+  throwEgg(x: number, y: number, z: number, dir: THREE.Vector3, speed: number): void {
+    this.eggs.push(new ThrownEgg(x, y, z, dir, speed, this.scene, (ix, iy, iz) => {
+      this.particles.blockBurst(Math.floor(ix), Math.floor(iy), Math.floor(iz), B.WoolWhite, 6);
+      if (Math.random() < 1 / 8) {
+        this.spawnMob('chicken', ix, iy, iz, undefined, true);
+      }
+    }));
+    this.sound.pop();
   }
 
   primeTnt(bx: number, by: number, bz: number): void {
@@ -217,6 +229,9 @@ export class EntityManager {
       explode: (x, y, z, power) => this.explode(x, y, z, power, this.griefingEnabled),
       flame: (x, y, z) => this.particles.flame(x, y, z),
       hearts: (x, y, z) => this.particles.hearts(x, y, z),
+      dropItem: (stack, x, y, z) => {
+        this.dropItem(stack, x, y, z);
+      },
       spawnBaby: (type, x, y, z) => {
         this.spawnMob(type, x, y, z, undefined, true);
       },
@@ -317,6 +332,22 @@ export class EntityManager {
       a.update(dt, this.world, targets);
     }
 
+    // Thrown eggs: knock mobs around (0 damage), shatter on the first hit.
+    for (const egg of this.eggs) {
+      targets.length = 0;
+      for (const m of this.mobs) {
+        if (m.dying > 0) continue;
+        targets.push({
+          radius: Math.max(0.5, m.halfW + 0.2),
+          x: m.pos.x, y: m.pos.y + m.height / 2, z: m.pos.z,
+          onHit: (dmg, fx, fz) => {
+            m.hurt(dmg, fx, fz, this.mobCtx());
+          },
+        });
+      }
+      egg.update(dt, this.world, targets);
+    }
+
     // TNT
     for (const t of this.tnts) {
       t.update(dt, this.world);
@@ -350,7 +381,7 @@ export class EntityManager {
       m.update(dt, ctx);
       if (m.dead && m.dying > 0) {
         // Died (not despawned): drops + xp
-        this.dropBlockItems(m.def.drops(Math.random), Math.floor(m.pos.x), Math.floor(m.pos.y + 0.3), Math.floor(m.pos.z));
+        this.dropBlockItems(m.deathDrops(Math.random), Math.floor(m.pos.x), Math.floor(m.pos.y + 0.3), Math.floor(m.pos.z));
         this.spawnXp(m.def.xp, m.pos.x, m.pos.y + 0.5, m.pos.z);
         this.particles.damage(m.pos.x, m.pos.y + 0.5, m.pos.z);
       }
@@ -431,18 +462,20 @@ export class EntityManager {
     this.items = sweep(this.items);
     this.orbs = sweep(this.orbs);
     this.arrows = sweep(this.arrows);
+    this.eggs = sweep(this.eggs);
     this.tnts = sweep(this.tnts);
     this.falling = sweep(this.falling);
     this.mobs = sweep(this.mobs);
   }
 
   clearAll(): void {
-    for (const list of [this.items, this.orbs, this.arrows, this.tnts, this.falling, this.mobs] as const) {
+    for (const list of [this.items, this.orbs, this.arrows, this.eggs, this.tnts, this.falling, this.mobs] as const) {
       for (const e of list) e.dispose(this.scene);
     }
     this.items = [];
     this.orbs = [];
     this.arrows = [];
+    this.eggs = [];
     this.tnts = [];
     this.falling = [];
     this.mobs = [];
@@ -454,7 +487,11 @@ export class EntityManager {
     return {
       mobs: this.mobs
         .filter((m) => m.dying === 0)
-        .map((m) => [m.type, +m.pos.x.toFixed(2), +m.pos.y.toFixed(2), +m.pos.z.toFixed(2), m.hp, Math.ceil(m.growTimer)]),
+        // Trailing sheared/regrow fields are optional for older saves.
+        .map((m) => [
+          m.type, +m.pos.x.toFixed(2), +m.pos.y.toFixed(2), +m.pos.z.toFixed(2), m.hp,
+          Math.ceil(m.growTimer), m.sheared ? 1 : 0, Math.ceil(m.regrowTimer),
+        ]),
       items: this.items.map((e) => [e.stack.id, e.stack.count, e.stack.dur ?? 0, +e.pos.x.toFixed(2), +e.pos.y.toFixed(2), +e.pos.z.toFixed(2)]),
       seeded: [...this.seededChunks],
     };
@@ -464,9 +501,14 @@ export class EntityManager {
     if (!data) return;
     this.seededChunks = new Set(data.seeded ?? []);
     for (const raw of data.mobs ?? []) {
-      const [type, x, y, z, hp, grow] = raw as [MobType, number, number, number, number, number?];
+      const [type, x, y, z, hp, grow, sheared, regrow] =
+        raw as [MobType, number, number, number, number, number?, number?, number?];
       const m = this.spawnMob(type, x, y, z, hp, (grow ?? 0) > 0);
       if (grow && grow > 0) m.growTimer = grow;
+      if (sheared) {
+        m.sheared = true;
+        m.regrowTimer = regrow && regrow > 0 ? regrow : 60;
+      }
     }
     for (const raw of data.items ?? []) {
       const [id, count, dur, x, y, z] = raw as number[];

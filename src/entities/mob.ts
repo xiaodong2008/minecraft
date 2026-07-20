@@ -4,6 +4,7 @@ import { buildMobModel, MobModel, MobType } from '../render/mobmodels';
 import { setObjectBrightness } from '../render/itemmesh';
 import { B, Drop } from '../blocks';
 import { I } from '../ids';
+import type { ItemStack } from '../items';
 import type { World } from '../world/world';
 
 export interface MobDef {
@@ -22,7 +23,13 @@ export const MOB_DEFS: Record<MobType, MobDef> = {
   zombie: {
     maxHp: 20, speed: 2.7, hostile: true, attackDamage: 3, xp: 5,
     halfW: 0.3, height: 1.9, burnsInDay: true,
-    drops: (r) => (r() < 0.8 ? [{ id: I.RottenFlesh, count: 1 + ((r() * 2) | 0) }] : []),
+    drops: (r) => {
+      const out: Drop[] = [];
+      if (r() < 0.8) out.push({ id: I.RottenFlesh, count: 1 + ((r() * 2) | 0) });
+      if (r() < 0.02) out.push({ id: I.Carrot, count: 1 });
+      if (r() < 0.02) out.push({ id: I.Potato, count: 1 });
+      return out;
+    },
   },
   skeleton: {
     maxHp: 20, speed: 2.8, hostile: true, attackDamage: 3, xp: 5,
@@ -87,6 +94,8 @@ export interface MobCtx {
   explode(x: number, y: number, z: number, power: number): void;
   flame(x: number, y: number, z: number): void;
   hearts(x: number, y: number, z: number): void;
+  /** Spawn a dropped item stack in the world (egg laying, shearing). */
+  dropItem(stack: ItemStack, x: number, y: number, z: number): void;
   spawnBaby(type: MobType, x: number, y: number, z: number): void;
   /** Living mobs of the same type near a point (for finding a mate). */
   findMate(self: Mob): Mob | null;
@@ -122,6 +131,11 @@ export class Mob extends Entity {
   breedCooldown = 0;
   /** Seconds left growing up; 0 = adult. */
   growTimer = 0;
+  /** Sheep wool state: sheared sheep regrow after a timer. */
+  sheared = false;
+  regrowTimer = 0;
+  /** Chickens lay an egg when this runs out (6-10 minutes). */
+  private eggTimer = 360 + Math.random() * 240;
 
   constructor(type: MobType, x: number, y: number, z: number, scene: THREE.Scene, hp?: number, baby = false) {
     super();
@@ -162,6 +176,27 @@ export class Mob extends Entity {
 
   get hostile(): boolean {
     return this.def.hostile;
+  }
+
+  /** Right-clicked with shears. Drops wool and starts the regrow timer; true if sheared. */
+  shear(ctx: MobCtx): boolean {
+    if (this.type !== 'sheep' || this.sheared || this.isBaby || this.dying > 0) return false;
+    this.sheared = true;
+    this.regrowTimer = 60 + Math.random() * 60;
+    ctx.dropItem(
+      { id: B.WoolWhite, count: 1 + ((Math.random() * 3) | 0) },
+      this.pos.x, this.pos.y + this.height * 0.6, this.pos.z,
+    );
+    ctx.mobSound(this.type, 'hurt');
+    return true;
+  }
+
+  /** Drops granted on death (sheared sheep drop no wool). */
+  deathDrops(rand: () => number): Drop[] {
+    const drops = this.def.drops(rand);
+    return this.type === 'sheep' && this.sheared
+      ? drops.filter((d) => d.id !== B.WoolWhite)
+      : drops;
   }
 
   hurt(dmg: number, fromX: number, fromZ: number, ctx: MobCtx): void {
@@ -219,6 +254,21 @@ export class Mob extends Entity {
     }
     if (this.love > 0 && Math.random() < dt * 1.2) {
       ctx.hearts(this.pos.x, this.pos.y + this.height, this.pos.z);
+    }
+
+    // Chickens periodically lay an egg.
+    if (this.type === 'chicken' && !this.isBaby) {
+      this.eggTimer -= dt;
+      if (this.eggTimer <= 0) {
+        this.eggTimer = 360 + Math.random() * 240;
+        ctx.dropItem({ id: I.Egg, count: 1 }, this.pos.x, this.pos.y + 0.2, this.pos.z);
+        ctx.mobSound(this.type, 'ambient');
+      }
+    }
+    // Sheared sheep regrow their wool after a while.
+    if (this.sheared) {
+      this.regrowTimer -= dt;
+      if (this.regrowTimer <= 0) this.sheared = false;
     }
 
     const p = ctx.playerPos;
@@ -402,6 +452,11 @@ export class Mob extends Entity {
       } else {
         limb.rotation.x = swing;
       }
+    }
+    if (this.model.body) {
+      // Sheared sheep show a slimmer torso until the wool regrows.
+      if (this.type === 'sheep' && this.sheared) this.model.body.scale.set(0.8, 0.72, 0.95);
+      else this.model.body.scale.set(1, 1, 1);
     }
     if (this.model.head && facePlayer) {
       const eyeY = this.pos.y + this.model.eyeHeight;

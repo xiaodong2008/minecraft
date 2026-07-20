@@ -10,6 +10,7 @@ import { WORLD_HEIGHT, SEA_LEVEL } from '../src/constants';
 import { matchRecipe } from '../src/crafting';
 import { Inventory } from '../src/inventory';
 import { breakTime } from '../src/player/interaction';
+import { SMELTING, itemDef, allItemIds } from '../src/items';
 import type { ItemStack } from '../src/items';
 
 let failures = 0;
@@ -144,6 +145,52 @@ const stoneDrops = blockDef(B.Stone).drops(() => 0.5);
 check('stone drops cobblestone', stoneDrops.length === 1 && stoneDrops[0].id === B.Cobblestone);
 const coalDrops = blockDef(B.CoalOre).drops(() => 0.5);
 check('coal ore drops coal item', coalDrops[0]?.id === I.Coal);
+
+// --- expansion content: crops, foods, recipes, smelts ---
+const carrotFinal = blockDef(B.Carrots3).drops(() => 0.5);
+check('mature carrots drop 2-4 carrots', carrotFinal[0]?.id === I.Carrot && carrotFinal[0].count === 3, JSON.stringify(carrotFinal));
+const carrotEarly = blockDef(B.Carrots0).drops(() => 0.5);
+check('young carrots drop 1 carrot', carrotEarly[0]?.id === I.Carrot && carrotEarly[0].count === 1);
+check('carrot crop chain grows', blockDef(B.Carrots0).growsTo === B.Carrots1 && blockDef(B.Carrots3).growsTo === undefined);
+check('potato crop registered', blockDef(B.Potatoes0).crop && itemDef(I.Potato).plantsCrop === B.Potatoes0);
+const melonDrops = blockDef(B.Melon).drops(() => 0.5);
+check('melon drops 3-7 slices', melonDrops[0]?.id === I.MelonSlice && melonDrops[0].count === 5, JSON.stringify(melonDrops));
+const lapisDrops = blockDef(B.LapisOre).drops(() => 0.5);
+check('lapis ore drops 4-8 lapis', lapisDrops[0]?.id === I.LapisLazuli && lapisDrops[0].count === 6, JSON.stringify(lapisDrops));
+const shelfDrops = blockDef(B.Bookshelf).drops(() => 0.5);
+check('bookshelf drops 3 books', shelfDrops[0]?.id === I.Book && shelfDrops[0].count === 3);
+check('clay drops 4 clay balls', blockDef(B.Clay).drops(() => 0.5)[0]?.count === 4);
+check('slabs are half-height', blockDef(B.OakSlab).height === 0.5 && blockDef(B.StoneSlab).height === 0.5);
+check("jack o'lantern glows", blockDef(B.JackOLantern).emission === 15);
+
+const shearsRecipe = matchRecipe(grid9(null, I.IronIngot, null, I.IronIngot, null, null, null, null, null));
+check('shears recipe (iron diagonal)', shearsRecipe?.id === I.Shears);
+const gappleRecipe = matchRecipe(grid9(
+  I.GoldIngot, I.GoldIngot, I.GoldIngot,
+  I.GoldIngot, I.Apple, I.GoldIngot,
+  I.GoldIngot, I.GoldIngot, I.GoldIngot,
+));
+check('golden apple recipe', gappleRecipe?.id === I.GoldenApple);
+const slabRecipe = matchRecipe(grid9(B.OakPlanks, B.OakPlanks, B.OakPlanks, null, null, null, null, null, null));
+check('oak slab recipe yields 6', slabRecipe?.id === B.OakSlab && slabRecipe.count === 6);
+const cookieRecipe = matchRecipe(grid9(I.Wheat, I.Sugar, I.Wheat, null, null, null, null, null, null));
+check('cookie recipe yields 8', cookieRecipe?.id === I.Cookie && cookieRecipe.count === 8);
+const paperRecipe = matchRecipe(grid9(B.SugarCane, B.SugarCane, B.SugarCane, null, null, null, null, null, null));
+check('paper recipe yields 3', paperRecipe?.id === I.Paper && paperRecipe.count === 3);
+const blueWool = matchRecipe(grid9(I.LapisLazuli, B.WoolWhite, null, null, null, null, null, null, null));
+check('lapis dyes wool blue', blueWool?.id === B.WoolBlue);
+const brickBlock = matchRecipe([{ id: I.BrickItem, count: 1 }, { id: I.BrickItem, count: 1 }, { id: I.BrickItem, count: 1 }, { id: I.BrickItem, count: 1 }]);
+check('4 bricks craft brick block', brickBlock?.id === B.Brick);
+
+check('potato smelts to baked potato', SMELTING[I.Potato]?.out === I.BakedPotato);
+check('clay ball smelts to brick', SMELTING[I.ClayBall]?.out === I.BrickItem);
+check('cactus smelts to green dye', SMELTING[B.Cactus]?.out === I.GreenDye);
+check('egg stacks to 16', itemDef(I.Egg).maxStack === 16);
+check('shears have durability', itemDef(I.Shears).durability === 238);
+check('golden apple heals', itemDef(I.GoldenApple).food?.heals === 4);
+const visible = allItemIds();
+check('crop stage blocks hidden from picker', !visible.includes(B.Carrots1) && !visible.includes(B.Potatoes2));
+check('new blocks visible in picker', visible.includes(B.Bookshelf) && visible.includes(B.LapisBlock) && visible.includes(B.Pumpkin));
 
 // --- furnace smelting ---
 const f = world.ensureFurnace(px, cellY, pz);

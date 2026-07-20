@@ -39,6 +39,13 @@ async function main(): Promise<void> {
   await sleep(700);
   await shot('01-title');
 
+  // Options screen opens from the title and returns
+  await page.click('#btn-title-options');
+  await sleep(250);
+  await shot('01b-options');
+  await page.click('#btn-options-done');
+  await sleep(200);
+
   // Title -> world select
   await page.click('#btn-singleplayer');
   await sleep(300);
@@ -664,6 +671,122 @@ async function main(): Promise<void> {
   if (sandAfter.landedTop !== ids.sand || sandAfter.landedAbove !== ids.sand || sandAfter.fallingLeft !== 0) {
     errors.push(`sand did not land as blocks: ${JSON.stringify(sandAfter)}`);
   }
+
+  // --- Chat + commands: /gamemode, /time set, /give
+  const runChat = async (command: string): Promise<void> => {
+    await page.evaluate(() => {
+      const g = (window as any).game;
+      if (g.mode !== 'playing') g.setMode('playing');
+      g.openChat('');
+    });
+    await sleep(150);
+    await page.type('#chat-input', command);
+    await page.keyboard.press('Enter');
+    await sleep(200);
+  };
+
+  await page.evaluate(() => {
+    const g = (window as any).game;
+    g.setMode('playing');
+    g.openChat('');
+  });
+  await sleep(200);
+  const chatOpen = await page.evaluate(() => ({
+    mode: (window as any).game.mode,
+    visible: !document.getElementById('chat-input-wrap')!.classList.contains('hidden'),
+  }));
+  console.log('  chat open:', JSON.stringify(chatOpen));
+  if (chatOpen.mode !== 'chat' || !chatOpen.visible) {
+    errors.push(`chat did not open: ${JSON.stringify(chatOpen)}`);
+  }
+  await page.keyboard.press('Escape');
+  await sleep(150);
+
+  await runChat('/gamemode creative');
+  const gm = await page.evaluate(() => {
+    const g = (window as any).game;
+    return { creative: g.session.player.creative, meta: g.session.meta.gamemode };
+  });
+  console.log('  /gamemode creative:', JSON.stringify(gm));
+  if (!gm.creative || gm.meta !== 'creative') {
+    errors.push(`/gamemode creative failed: ${JSON.stringify(gm)}`);
+  }
+
+  await runChat('/time set noon');
+  const skyTime = await page.evaluate(() => (window as any).game.session.sky.time);
+  console.log('  /time set noon ->', skyTime.toFixed(3));
+  if (Math.abs(skyTime - 0.5) > 0.02) errors.push(`/time set noon failed: sky.time=${skyTime}`);
+
+  await page.evaluate(() => (window as any).game.session.inventory.clear());
+  await runChat('/give diamond 5');
+  const diamonds = await page.evaluate((id) => (window as any).game.session.inventory.countOf(id), I.Diamond);
+  console.log('  /give diamond 5 ->', diamonds);
+  if (diamonds !== 5) errors.push(`/give diamond failed: got ${diamonds}`);
+  await shot('15-chat-commands');
+
+  // --- Creative: flight toggle + creative picker screen
+  await page.evaluate(() => {
+    const g = (window as any).game;
+    if (g.mode !== 'playing') g.setMode('playing');
+  });
+  await page.keyboard.press('Space');
+  await sleep(80);
+  await page.keyboard.press('Space');
+  await sleep(300);
+  const flying = await page.evaluate(() => (window as any).game.session.player.flying);
+  console.log('  creative flight:', flying);
+  if (!flying) errors.push('double-space did not enable creative flight');
+
+  await page.evaluate(() => (window as any).game.openInventory());
+  await sleep(300);
+  const creativeInfo = await page.evaluate(() => ({
+    pickers: document.querySelectorAll('#screen .creative-scroll .gui-slot').length,
+    kind: (window as any).game.session.screens.kind,
+  }));
+  console.log('  creative picker:', JSON.stringify(creativeInfo));
+  if (creativeInfo.kind !== 'creative' || creativeInfo.pickers < 40) {
+    errors.push(`creative picker missing: ${JSON.stringify(creativeInfo)}`);
+  }
+  await shot('16-creative-picker');
+
+  // Shift-click the first picker slot -> a full stack lands in the inventory
+  await page.evaluate(() => (window as any).game.session.inventory.clear());
+  const pickSlot = await page.$('#screen .creative-scroll .gui-slot');
+  if (pickSlot) {
+    const pb = (await pickSlot.boundingBox())!;
+    await page.keyboard.down('Shift');
+    await page.mouse.click(pb.x + pb.width / 2, pb.y + pb.height / 2);
+    await page.keyboard.up('Shift');
+    await sleep(150);
+  }
+  const picked = await page.evaluate(() => {
+    const inv = (window as any).game.session.inventory;
+    const s = inv.slots.find((x: any) => x);
+    return s ? { id: s.id, count: s.count } : null;
+  });
+  console.log('  picker shift-click:', JSON.stringify(picked));
+  if (!picked || picked.count !== 64) errors.push(`creative picker shift-click failed: ${JSON.stringify(picked)}`);
+  await page.keyboard.press('Escape');
+  await sleep(200);
+
+  // --- keepInventory gamerule survives death
+  await runChat('/gamerule keepInventory true');
+  await runChat('/gamemode survival');
+  await page.evaluate((stoneId) => {
+    const g = (window as any).game;
+    const s = g.session;
+    s.inventory.clear();
+    s.inventory.add(stoneId, 7);
+    for (const m of s.entities.mobs) { m.dead = true; m.dying = 0; }
+    s.player.hurtTime = 0;
+    s.player.hurt(1000, undefined, undefined, true);
+  }, B.Stone);
+  await page.waitForSelector('#menu-death:not(.hidden)', { timeout: 5000 });
+  await page.click('#btn-respawn');
+  await sleep(400);
+  const keptStone = await page.evaluate((stoneId) => (window as any).game.session.inventory.countOf(stoneId), B.Stone);
+  console.log('  keepInventory:', keptStone);
+  if (keptStone !== 7) errors.push(`keepInventory failed: kept ${keptStone}/7 stone`);
 
   await browser.close();
 

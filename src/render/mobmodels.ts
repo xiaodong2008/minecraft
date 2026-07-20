@@ -12,6 +12,8 @@ export interface MobModel {
   root: THREE.Group;
   /** Node rotated to face the move/look direction (yaw applied on root). */
   head: THREE.Object3D | null;
+  /** Torso node (scaled down on sheared sheep). */
+  body?: THREE.Object3D;
   /** Limbs swung while walking; userData.phase holds the swing phase offset. */
   limbs: THREE.Object3D[];
   /** Height of the model's eyes, for head pitch. */
@@ -263,7 +265,7 @@ function quadruped(
     legs.push(leg);
   }
   root.add(body, head, ...legs);
-  return { root, head, limbs: legs, eyeHeight: (o.headY + 2) / 16 };
+  return { root, head, body, limbs: legs, eyeHeight: (o.headY + 2) / 16 };
 }
 
 export function buildMobModel(type: MobType): MobModel {

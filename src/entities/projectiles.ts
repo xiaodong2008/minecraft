@@ -96,6 +96,74 @@ export class Arrow extends Entity {
   }
 }
 
+/** Thrown egg: light ballistic lob that shatters on the first thing it touches. */
+export class ThrownEgg extends Entity {
+  readonly obj: THREE.Mesh;
+  private readonly onImpact: (x: number, y: number, z: number) => void;
+
+  constructor(
+    x: number, y: number, z: number,
+    dir: THREE.Vector3, speed: number,
+    scene: THREE.Scene,
+    onImpact: (x: number, y: number, z: number) => void,
+  ) {
+    super();
+    this.halfW = 0.08;
+    this.height = 0.16;
+    this.pos.set(x, y, z);
+    this.vel.copy(dir).normalize().multiplyScalar(speed);
+    this.onImpact = onImpact;
+    this.obj = new THREE.Mesh(
+      new THREE.BoxGeometry(0.16, 0.2, 0.16),
+      new THREE.MeshBasicMaterial({ color: 0xf0ead8 }),
+    );
+    scene.add(this.obj);
+  }
+
+  private shatter(): void {
+    this.onImpact(this.pos.x, this.pos.y, this.pos.z);
+    this.dead = true;
+  }
+
+  update(dt: number, world: World, targets: ArrowHitTarget[]): void {
+    this.age += dt;
+    if (this.age > 15) this.dead = true;
+
+    const prev = this.pos.clone();
+    this.vel.y -= GRAVITY * 0.75 * dt;
+    const res = moveEntity(world, this.pos, this.vel, this.halfW, this.height, dt);
+
+    // Segment-vs-target hit test (no piercing: first hit shatters the egg).
+    const seg = this.pos.clone().sub(prev);
+    const segLen = seg.length();
+    if (segLen > 1e-5) {
+      for (const t of targets) {
+        const toT = new THREE.Vector3(t.x - prev.x, t.y - prev.y, t.z - prev.z);
+        const along = THREE.MathUtils.clamp(toT.dot(seg) / (segLen * segLen), 0, 1);
+        const close = prev.clone().addScaledVector(seg, along);
+        const d2 = (close.x - t.x) ** 2 + (close.y - t.y) ** 2 + (close.z - t.z) ** 2;
+        if (d2 < t.radius * t.radius) {
+          t.onHit(0, prev.x, prev.z);
+          this.shatter();
+          return;
+        }
+      }
+    }
+
+    if (res.hitWall || res.onGround || (this.vel.lengthSq() < 0.01 && !this.inWater)) {
+      this.shatter();
+      return;
+    }
+    this.obj.position.copy(this.pos);
+    this.obj.rotation.x += dt * 9;
+    this.obj.rotation.z += dt * 7;
+  }
+
+  dispose(scene: THREE.Scene): void {
+    scene.remove(this.obj);
+  }
+}
+
 /** Falling sand/gravel: block visual that re-solidifies where it lands. */
 export class FallingBlock extends Entity {
   readonly obj: THREE.Object3D;

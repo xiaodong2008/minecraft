@@ -65,6 +65,31 @@ shaped(['GSG', 'SGS', 'GSG'], { G: I.Gunpowder, S: B.Sand }, B.TNT);
 shaped(['WWW', 'WWW', 'WWW'], { W: I.String }, B.WoolWhite);
 shaped(['WWW', 'PPP'], { W: B.WoolWhite, P: B.OakPlanks }, B.Bed);
 shaped(['I I', ' I '], { I: I.IronIngot }, I.Bucket);
+shaped([' I', 'I '], { I: I.IronIngot }, I.Shears);
+shaped(['GGG', 'GAG', 'GGG'], { G: I.GoldIngot, A: I.Apple }, I.GoldenApple);
+shapeless([B.SugarCane], I.Sugar);
+shaped(['WSW'], { W: I.Wheat, S: I.Sugar }, I.Cookie, 8);
+shaped(['MMM', 'MMM', 'MMM'], { M: I.MelonSlice }, B.Melon);
+shaped(['P', 'T'], { P: B.Pumpkin, T: B.Torch }, B.JackOLantern);
+
+// ---- building / materials ----
+shaped(['PPP'], { P: B.OakPlanks }, B.OakSlab, 6);
+shaped(['CCC'], { C: B.Cobblestone }, B.CobbleSlab, 6);
+shaped(['SSS'], { S: B.Stone }, B.StoneSlab, 6);
+shaped(['SSS'], { S: B.SugarCane }, I.Paper, 3);
+shapeless([I.Paper, I.Paper, I.Paper, I.Leather], I.Book);
+shaped(['PPP', 'BBB', 'PPP'], { P: B.OakPlanks, B: I.Book }, B.Bookshelf);
+shapeless([B.Cobblestone, B.Sapling], B.MossyCobblestone);
+shaped(['BB', 'BB'], { B: I.BrickItem }, B.Brick);
+shaped(['CC', 'CC'], { C: I.ClayBall }, B.Clay);
+shaped(['LLL', 'LLL', 'LLL'], { L: I.LapisLazuli }, B.LapisBlock);
+shapeless([B.LapisBlock], I.LapisLazuli, 9);
+
+// ---- wool dyeing ----
+shapeless([I.LapisLazuli, B.WoolWhite], B.WoolBlue);
+shapeless([B.Poppy, B.WoolWhite], B.WoolRed);
+shapeless([B.Dandelion, B.WoolWhite], B.WoolYellow);
+shapeless([I.GreenDye, B.WoolWhite], B.WoolGreen);
 
 // ---------------- matching ----------------
 

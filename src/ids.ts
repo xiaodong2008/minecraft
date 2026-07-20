@@ -40,6 +40,16 @@ export const I = {
   Potato: 291,
   BakedPotato: 292,
   GoldenApple: 293,
+  Sugar: 294,
+  Cookie: 295,
+  MelonSlice: 296,
+  Paper: 297,
+  Book: 298,
+  ClayBall: 299,
+  // 300..324 are tools, 340..355 armor — plain items continue in the gap.
+  BrickItem: 325,
+  LapisLazuli: 326,
+  GreenDye: 327,
 } as const;
 
 // Tools: 300 + tier*5 + kind
