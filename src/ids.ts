@@ -33,6 +33,13 @@ export const I = {
   Bucket: 284,
   WaterBucket: 285,
   LavaBucket: 286,
+  MilkBucket: 287,
+  Shears: 288,
+  Egg: 289,
+  Carrot: 290,
+  Potato: 291,
+  BakedPotato: 292,
+  GoldenApple: 293,
 } as const;
 
 // Tools: 300 + tier*5 + kind

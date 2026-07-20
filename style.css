@@ -490,6 +490,25 @@ button { font-family: inherit; }
 
 .result-slot { width: 48px; height: 48px; }
 
+/* creative picker */
+.creative-search {
+  width: 100%;
+  margin: 2px 0 8px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.creative-scroll {
+  max-height: min(320px, 38vh);
+  overflow-y: auto;
+  border: 2px solid;
+  border-color: #373737 #fff #fff #373737;
+  background: #8b8b8b;
+  padding: 3px;
+  margin-bottom: 6px;
+}
+.creative-scroll .slot-grid { justify-content: start; }
+.creative-scroll .gui-slot { background: #6e6e6e; }
+
 .craft-row, .furnace-row {
   display: flex;
   align-items: center;

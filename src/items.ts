@@ -30,6 +30,8 @@ export interface ArmorInfo {
 export interface FoodInfo {
   hunger: number;
   saturation: number;
+  /** Instant health restored on eating (golden apple style). */
+  heals?: number;
 }
 
 export interface ItemDef {
@@ -41,6 +43,10 @@ export interface ItemDef {
   attackDamage: number;
   /** Furnace burn time in seconds. */
   fuel?: number;
+  /** Right-clicking farmland with this item plants this crop block. */
+  plantsCrop?: number;
+  /** Durability for non-tool wearables (shears, flint and steel). */
+  durability?: number;
 }
 
 const TIER_SPEED = [2, 4, 6, 12, 8];
@@ -84,7 +90,7 @@ item(I.GoldIngot, 'Gold Ingot');
 item(I.Diamond, 'Diamond');
 item(I.Flint, 'Flint');
 item(I.Wheat, 'Wheat');
-item(I.Seeds, 'Wheat Seeds');
+item(I.Seeds, 'Wheat Seeds', { plantsCrop: B.Wheat0 });
 item(I.Bread, 'Bread', { food: { hunger: 5, saturation: 6 } });
 item(I.Apple, 'Apple', { food: { hunger: 4, saturation: 2.4 } });
 item(I.PorkchopRaw, 'Raw Porkchop', { food: { hunger: 3, saturation: 1.8 } });
@@ -186,6 +192,26 @@ export const SMELTING: Record<number, SmeltResult> = {
   [I.ChickenRaw]: { out: I.ChickenCooked, xp: 0.35 },
   [I.MuttonRaw]: { out: I.MuttonCooked, xp: 0.35 },
 };
+
+/** Technical blocks hidden from the creative picker (crop stages, lit variants...). */
+const HIDDEN_BLOCKS = new Set<number>([
+  B.FurnaceLit, B.Farmland, B.FarmlandWet,
+  B.Wheat0, B.Wheat0 + 1, B.Wheat0 + 2, B.Wheat0 + 3,
+  B.Wheat0 + 4, B.Wheat0 + 5, B.Wheat0 + 6, B.Wheat0 + 7,
+]);
+
+/**
+ * Every obtainable item id, in display order: blocks first, then materials,
+ * tools, armor. Used by the creative inventory and /give completion.
+ */
+export function allItemIds(): number[] {
+  const out: number[] = [];
+  for (let id = 1; id < 256; id++) {
+    if (isBlockId(id) && !HIDDEN_BLOCKS.has(id)) out.push(id);
+  }
+  out.push(...ITEMS.keys());
+  return out;
+}
 
 // ---------------- stack helpers ----------------
 

@@ -31,6 +31,11 @@ export class Player {
   sprinting = false;
   sneaking = false;
 
+  /** Creative mode: no damage, no hunger, flight, instant break. */
+  creative = false;
+  /** Creative flight (toggled by double-tapping Space). */
+  flying = false;
+
   // Vitals
   health = MAX_HEALTH;
   food = MAX_FOOD;
@@ -129,6 +134,7 @@ export class Player {
 
   hurt(amount: number, fromX?: number, fromZ?: number, bypassArmor = false): void {
     if (!this.alive || amount <= 0) return;
+    if (this.creative) return; // creative players take no damage
     if (this.hurtTime > 0.4) return; // i-frames
 
     let dmg = amount;
@@ -155,10 +161,11 @@ export class Player {
     }
   }
 
-  /** Eats food: fills hunger + saturation. */
-  eat(hunger: number, saturation: number): void {
+  /** Eats food: fills hunger + saturation (+ instant health for golden apples). */
+  eat(hunger: number, saturation: number, heals = 0): void {
     this.food = Math.min(MAX_FOOD, this.food + hunger);
     this.saturation = Math.min(this.food, this.saturation + saturation);
+    if (heals > 0) this.health = Math.min(MAX_HEALTH, this.health + heals);
   }
 
   addXp(points: number): boolean {
@@ -184,6 +191,11 @@ export class Player {
   }
 
   private tickVitals(dt: number): void {
+    if (this.creative) {
+      this.air = MAX_AIR;
+      this.fireTime = 0;
+      return;
+    }
     // Exhaustion drains saturation, then food.
     while (this.exhaustion >= 4) {
       this.exhaustion -= 4;
@@ -302,22 +314,32 @@ export class Player {
     const dirX = -sin * fwd + cos * strafe;
     const dirZ = -cos * fwd - sin * strafe;
 
-    this.sneaking = input.down('ShiftLeft') && !this.inWater;
+    this.sneaking = input.down('ShiftLeft') && !this.inWater && !this.flying;
     this.sprinting =
       (input.down('ControlLeft') || input.sprintLatch) &&
-      fwd > 0 && !this.sneaking && !this.inWater && this.food > 6;
+      fwd > 0 && !this.sneaking && !this.inWater && (this.food > 6 || this.creative);
     if (fwd <= 0) input.sprintLatch = false;
 
-    if (this.inWater || this.inLava) {
+    // Creative flight: double-tap Space toggles, landing on the ground clears it.
+    if (this.creative && input.consumeFlyToggle()) {
+      this.flying = !this.flying;
+      if (this.flying) this.vel.y = Math.max(this.vel.y, 0);
+    }
+    if (!this.creative) this.flying = false;
+
+    if (this.flying) {
+      this.updateFly(dt, input, dirX, dirZ);
+    } else if (this.inWater || this.inLava) {
       this.updateSwim(dt, input, dirX, dirZ);
     } else {
       this.updateWalk(dt, input, dirX, dirZ);
     }
 
     this.moveWithCollision(dt);
+    if (this.flying && this.onGround) this.flying = false;
 
     // Fall damage: track the peak height while airborne, settle on landing.
-    if (this.inWater || this.inLava) {
+    if (this.inWater || this.inLava || this.flying) {
       this.fallStartY = null;
     } else if (!this.onGround) {
       this.fallStartY = this.fallStartY === null ? this.pos.y : Math.max(this.fallStartY, this.pos.y);
@@ -376,6 +398,18 @@ export class Player {
         this.vel.z += (this.vel.z / d) * 1.4;
       }
     }
+  }
+
+  private updateFly(dt: number, input: Input, dirX: number, dirZ: number): void {
+    const speed = (this.sprinting ? 21 : 10.5);
+    const blend = 1 - Math.exp(-8 * dt);
+    this.vel.x += (dirX * speed - this.vel.x) * blend;
+    this.vel.z += (dirZ * speed - this.vel.z) * blend;
+
+    let targetY = 0;
+    if (input.down('Space')) targetY = speed * 0.75;
+    else if (input.down('ShiftLeft')) targetY = -speed * 0.75;
+    this.vel.y += (targetY - this.vel.y) * (1 - Math.exp(-10 * dt));
   }
 
   private updateSwim(dt: number, input: Input, dirX: number, dirZ: number): void {
@@ -514,10 +548,14 @@ export class Player {
     );
   }
 
+  /** Options toggle: camera view bobbing. */
+  bobbingEnabled = true;
+
   applyCamera(camera: THREE.PerspectiveCamera): void {
     const eye = this.eyePosition();
-    const bob = Math.sin(this.bobPhase * Math.PI) * 0.055 * this.bobAmount;
-    const bobX = Math.cos(this.bobPhase * Math.PI * 0.5) * 0.025 * this.bobAmount;
+    const bobScale = this.bobbingEnabled ? 1 : 0;
+    const bob = Math.sin(this.bobPhase * Math.PI) * 0.055 * this.bobAmount * bobScale;
+    const bobX = Math.cos(this.bobPhase * Math.PI * 0.5) * 0.025 * this.bobAmount * bobScale;
 
     camera.position.set(eye.x, eye.y + bob, eye.z);
     camera.rotation.set(0, 0, 0);

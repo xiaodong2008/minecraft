@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CHUNK_SIZE, WORLD_HEIGHT, SEA_LEVEL } from '../constants';
-import { B, blockDef, isSolid, isTargetable, isOpaqueCube, isWheat } from '../blocks';
+import { B, blockDef, isSolid, isTargetable, isOpaqueCube } from '../blocks';
 import type { ItemStack } from '../items';
 import { SMELTING, fuelTime, itemDef } from '../items';
 import { Chunk, chunkIndex, chunkKey } from './chunk';
@@ -458,13 +458,14 @@ export class World implements LightWorldAccess {
   }
 
   private randomTickBlock(x: number, y: number, z: number, id: number, sun: number): void {
-    // Wheat growth
-    if (isWheat(id) && id < B.Wheat7) {
+    // Crop growth (wheat, carrots, potatoes...)
+    const bdef = blockDef(id);
+    if (bdef.crop && bdef.growsTo !== undefined) {
       if (this.lightAt(x, y, z, sun) >= 9) {
         const below = this.getBlockAt(x, y - 1, z);
         const hydrated = below === B.FarmlandWet;
         if (this.rand() < (hydrated ? 0.33 : 0.12)) {
-          this.setBlockAt(x, y, z, id + 1);
+          this.setBlockAt(x, y, z, bdef.growsTo);
         }
       }
       return;
@@ -476,7 +477,7 @@ export class World implements LightWorldAccess {
       else if (!wet && id === B.FarmlandWet && this.rand() < 0.3) this.setBlockAt(x, y, z, B.Farmland);
       // Revert to dirt when nothing is planted for a while
       const above = this.getBlockAt(x, y + 1, z);
-      if (!isWheat(above) && this.rand() < 0.05) this.setBlockAt(x, y, z, B.Dirt);
+      if (!blockDef(above).crop && this.rand() < 0.05) this.setBlockAt(x, y, z, B.Dirt);
       return;
     }
 

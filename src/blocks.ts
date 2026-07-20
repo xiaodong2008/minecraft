@@ -103,6 +103,10 @@ export interface BlockDef {
   height: number;
   /** Blast resistance (explosions). */
   resistance: number;
+  /** A crop planted on farmland (keeps farmland from reverting, bone-mealable). */
+  crop: boolean;
+  /** Random-tick growth: the block id this grows into (crop stages). */
+  growsTo?: number;
   /** What the block drops when mined with a sufficient tool. */
   drops: (rand: () => number) => Drop[];
   /** XP orbs dropped when mined (e.g. coal/diamond ore). */
@@ -129,6 +133,7 @@ function def(partial: Partial<BlockDef> & { name: string; tiles: BlockDef['tiles
     hasFacing: false,
     height: 1,
     resistance: 6,
+    crop: false,
     drops: () => [],
     xp: () => 0,
   };
@@ -260,7 +265,8 @@ BLOCKS[B.FarmlandWet] = def({
 for (let stage = 0; stage < 8; stage++) {
   BLOCKS[B.Wheat0 + stage] = def({
     name: 'Wheat Crops', tiles: all(TILE.WHEAT_0 + stage), render: RENDER_CROSS, opacity: 0,
-    solid: false, hardness: 0, needsSupport: true, sound: 'grass',
+    solid: false, hardness: 0, needsSupport: true, sound: 'grass', crop: true,
+    growsTo: stage < 7 ? B.Wheat0 + stage + 1 : undefined,
     drops: stage === 7
       ? (rand) => [{ id: I.Wheat, count: 1 }, { id: I.Seeds, count: 1 + Math.floor(rand() * 3) }]
       : () => [{ id: I.Seeds, count: 1 }],

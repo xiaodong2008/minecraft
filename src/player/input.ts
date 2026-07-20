@@ -18,6 +18,13 @@ export class Input {
   sprintLatch = false;
   private lastWTime = 0;
 
+  /** Set by double-tapping Space (creative flight toggle). Consumed by the player. */
+  private flyToggleQueued = false;
+  private lastSpaceTime = 0;
+
+  /** When true (menus/screens/chat open), key and button queries read as idle. */
+  suppress = false;
+
   private readonly canvas: HTMLCanvasElement;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -32,6 +39,11 @@ export class Input {
         const now = performance.now();
         if (now - this.lastWTime < 280) this.sprintLatch = true;
         this.lastWTime = now;
+      }
+      if (e.code === 'Space') {
+        const now = performance.now();
+        if (now - this.lastSpaceTime < 280) this.flyToggleQueued = true;
+        this.lastSpaceTime = now;
       }
 
       // Keep browser shortcuts from stealing game keys while playing.
@@ -128,17 +140,24 @@ export class Input {
   }
 
   down(code: string): boolean {
-    return this.keys.has(code);
+    return !this.suppress && this.keys.has(code);
   }
 
   /** True only on the frame the key went down. */
   pressed(code: string): boolean {
-    return this.pressedEdge.has(code);
+    return !this.suppress && this.pressedEdge.has(code);
   }
 
   /** True only on the frame the button went down. */
   buttonPressed(button: number): boolean {
-    return this.buttonEdge[button];
+    return !this.suppress && this.buttonEdge[button];
+  }
+
+  /** True once per double-tap of Space (consumed). */
+  consumeFlyToggle(): boolean {
+    const v = this.flyToggleQueued;
+    this.flyToggleQueued = false;
+    return v && !this.suppress;
   }
 
   /** Consume mouse movement accumulated since last frame. */

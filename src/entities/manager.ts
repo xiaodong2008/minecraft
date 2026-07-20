@@ -21,6 +21,8 @@ export interface EntityHooks {
   hurtPlayer(dmg: number, fromX: number, fromZ: number): void;
   playerPos(): THREE.Vector3;
   playerAlive(): boolean;
+  /** False for creative players: hostiles ignore them. */
+  playerTargetable?(): boolean;
 }
 
 export class EntityManager {
@@ -30,6 +32,11 @@ export class EntityManager {
   tnts: PrimedTnt[] = [];
   falling: FallingBlock[] = [];
   mobs: Mob[] = [];
+
+  /** Gamerule doMobSpawning. */
+  spawningEnabled = true;
+  /** Gamerule mobGriefing: creeper explosions destroy blocks. */
+  griefingEnabled = true;
 
   /** Chunks that already received their one-time passive mob seeding. */
   seededChunks = new Set<string>();
@@ -113,13 +120,15 @@ export class EntityManager {
     this.falling.push(new FallingBlock(bx, by, bz, id, obj, this.scene));
   }
 
-  explode(x: number, y: number, z: number, power: number): void {
-    const result = this.world.explode(x, y, z, power);
-    for (const d of result.destroyed) {
-      if (d.id === B.TNT) {
-        this.primeTnt(d.x, d.y, d.z);
-      } else if (Math.random() < 0.3) {
-        this.dropBlockItems(blockDef(d.id).drops(Math.random), d.x, d.y, d.z);
+  explode(x: number, y: number, z: number, power: number, griefs = true): void {
+    if (griefs) {
+      const result = this.world.explode(x, y, z, power);
+      for (const d of result.destroyed) {
+        if (d.id === B.TNT) {
+          this.primeTnt(d.x, d.y, d.z);
+        } else if (Math.random() < 0.3) {
+          this.dropBlockItems(blockDef(d.id).drops(Math.random), d.x, d.y, d.z);
+        }
       }
     }
     this.particles.explosion(x, y, z, power);
@@ -201,11 +210,11 @@ export class EntityManager {
     return {
       world: this.world,
       playerPos: this.hooks.playerPos(),
-      playerAlive: this.hooks.playerAlive(),
+      playerAlive: this.hooks.playerAlive() && (this.hooks.playerTargetable?.() ?? true),
       sunFactor: this.lastSun,
       hurtPlayer: (dmg, fx, fz) => this.hooks.hurtPlayer(dmg, fx, fz),
       shootArrow: (x, y, z, dir, damage) => this.shootArrow(x, y, z, dir, 22, damage, false),
-      explode: (x, y, z, power) => this.explode(x, y, z, power),
+      explode: (x, y, z, power) => this.explode(x, y, z, power, this.griefingEnabled),
       flame: (x, y, z) => this.particles.flame(x, y, z),
       hearts: (x, y, z) => this.particles.hearts(x, y, z),
       spawnBaby: (type, x, y, z) => {
@@ -298,7 +307,7 @@ export class EntityManager {
             },
           });
         }
-      } else if (alive) {
+      } else if (alive && (this.hooks.playerTargetable?.() ?? true)) {
         targets.push({
           radius: 0.65,
           x: pp.x, y: pp.y + 0.9, z: pp.z,
@@ -362,6 +371,7 @@ export class EntityManager {
       const key = `${chunk.cx},${chunk.cz}`;
       if (this.seededChunks.has(key)) continue;
       this.seededChunks.add(key);
+      if (!this.spawningEnabled) continue;
       if (Math.random() > 0.12) continue;
       const types: MobType[] = ['pig', 'cow', 'sheep', 'chicken'];
       const type = types[(Math.random() * types.length) | 0];
@@ -380,6 +390,7 @@ export class EntityManager {
     this.hostileSpawnTimer -= dt;
     if (this.hostileSpawnTimer > 0) return;
     this.hostileSpawnTimer = 1.6;
+    if (!this.spawningEnabled) return;
     if (this.hostileCount() >= MAX_HOSTILE) return;
 
     for (let attempt = 0; attempt < 6; attempt++) {

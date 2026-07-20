@@ -4,7 +4,7 @@
 // Outputs raw typed arrays (three.js-free) so it can run in headless tests.
 
 import { CHUNK_SIZE, WORLD_HEIGHT } from '../constants';
-import { B, BLOCKS, RENDER_CROSS, RENDER_NONE, isOpaqueCube, isWheat } from '../blocks';
+import { B, BLOCKS, RENDER_CROSS, RENDER_NONE, isOpaqueCube } from '../blocks';
 import { uvRect } from '../render/tiles';
 import { hash2 } from '../utils/noise';
 import { Chunk, chunkIndex } from './chunk';
@@ -260,7 +260,7 @@ function emitCross(builder: MeshBuilder, x: number, y: number, z: number, id: nu
   // (not for torches/crops which must stay centered).
   let ox = 0;
   let oz = 0;
-  if (id !== B.Torch && !isWheat(id)) {
+  if (id !== B.Torch && !def.crop) {
     ox = (hash2(cx * 16 + x, cz * 16 + z, 101) - 0.5) * 0.3;
     oz = (hash2(cx * 16 + x, cz * 16 + z, 202) - 0.5) * 0.3;
   }

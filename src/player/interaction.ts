@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { BLOCK_REACH, ATTACK_REACH } from '../constants';
-import { B, blockDef, isSolid, isWheat } from '../blocks';
+import { B, blockDef, isSolid } from '../blocks';
 import { I } from '../ids';
 import { itemDef, ItemStack } from '../items';
 import { buildCrackTextures } from '../render/atlas';
@@ -140,7 +140,7 @@ export class Interaction {
         this.particles.damage(mob.pos.x, mob.pos.y + mob.height * 0.6, mob.pos.z);
         this.sound.attackHit();
         this.player.exhaustion += 0.1;
-        if (held && itemDef(held.id).tool) {
+        if (held && itemDef(held.id).tool && !this.player.creative) {
           if (this.inventory.damageHeld(1)) this.sound.toolBreak();
         }
         this.resetMining();
@@ -153,10 +153,34 @@ export class Interaction {
     this.updateMining(dt, input);
   }
 
+  private creativeBreakCooldown = 0;
+
   private updateMining(dt: number, input: Input): void {
     const t = this.target;
+    this.creativeBreakCooldown = Math.max(0, this.creativeBreakCooldown - dt);
     if (!input.buttons[0] || !t || this.usingKind) {
       this.resetMining();
+      return;
+    }
+
+    // Creative: instant break, no drops, breaks anything.
+    if (this.player.creative) {
+      this.resetMining();
+      if (input.buttonPressed(0) || this.creativeBreakCooldown <= 0) {
+        this.creativeBreakCooldown = 0.25;
+        const def = blockDef(t.id);
+        const be = this.world.getBlockEntity(t.x, t.y, t.z);
+        if (be) {
+          const spill: (ItemStack | null)[] = be.kind === 'chest' ? be.slots : [be.input, be.fuel, be.output];
+          for (const s of spill) {
+            if (s) this.entities.dropItem({ ...s }, t.x + 0.5, t.y + 0.5, t.z + 0.5);
+          }
+        }
+        this.world.setBlockAt(t.x, t.y, t.z, B.Air);
+        this.sound.dig(def.sound);
+        this.particles.blockBurst(t.x, t.y, t.z, t.id);
+        this.events.onSwing();
+      }
       return;
     }
 
@@ -233,7 +257,7 @@ export class Interaction {
     }
 
     this.player.exhaustion += 0.005;
-    if (held && itemDef(held.id).tool && def.hardness > 0) {
+    if (held && itemDef(held.id).tool && def.hardness > 0 && !this.player.creative) {
       if (this.inventory.damageHeld(1)) this.sound.toolBreak();
     }
   }
@@ -261,7 +285,7 @@ export class Interaction {
         this.useProgress = Math.min(1, this.useTime / 1.6);
         if (Math.random() < dt * 8) this.sound.eat();
         if (this.useTime >= 1.6 && held && heldDef?.food) {
-          this.player.eat(heldDef.food.hunger, heldDef.food.saturation);
+          this.player.eat(heldDef.food.hunger, heldDef.food.saturation, heldDef.food.heals ?? 0);
           this.inventory.take(this.inventory.selected, 1);
           this.sound.burp();
           this.usingKind = null;
@@ -336,7 +360,7 @@ export class Interaction {
 
     // 3) Bow — holding right-click starts drawing again after a shot
     if (held.id === I.Bow && (clicked || input.buttons[2])) {
-      if (this.inventory.countOf(I.Arrow) > 0) {
+      if (this.inventory.countOf(I.Arrow) > 0 || this.player.creative) {
         this.usingKind = 'bow';
         this.useTime = 0;
       } else if (clicked) {
@@ -355,14 +379,14 @@ export class Interaction {
         this.world.setBlockAt(t.x, t.y, t.z, B.Farmland);
         this.sound.dig('dirt');
         this.events.onSwing();
-        if (this.inventory.damageHeld(1)) this.sound.toolBreak();
+        if (!this.player.creative && this.inventory.damageHeld(1)) this.sound.toolBreak();
         return;
       }
 
-      if (held.id === I.Seeds && (t.id === B.Farmland || t.id === B.FarmlandWet) && t.ny === 1) {
+      if (heldDef.plantsCrop !== undefined && (t.id === B.Farmland || t.id === B.FarmlandWet) && t.ny === 1) {
         if (this.world.getBlockAt(t.x, t.y + 1, t.z) === B.Air) {
-          this.world.setBlockAt(t.x, t.y + 1, t.z, B.Wheat0);
-          this.inventory.take(this.inventory.selected, 1);
+          this.world.setBlockAt(t.x, t.y + 1, t.z, heldDef.plantsCrop);
+          if (!this.player.creative) this.inventory.take(this.inventory.selected, 1);
           this.sound.place('grass');
           this.events.onSwing();
         }
@@ -370,17 +394,24 @@ export class Interaction {
       }
 
       if (held.id === I.BoneMeal) {
-        if (isWheat(t.id) && t.id < B.Wheat7) {
+        const tdef = blockDef(t.id);
+        if (tdef.crop && tdef.growsTo !== undefined) {
+          let grown = t.id;
           const boost = 2 + ((Math.random() * 4) | 0);
-          this.world.setBlockAt(t.x, t.y, t.z, Math.min(B.Wheat7, t.id + boost));
-          this.inventory.take(this.inventory.selected, 1);
+          for (let i = 0; i < boost; i++) {
+            const next = blockDef(grown).growsTo;
+            if (next === undefined) break;
+            grown = next;
+          }
+          this.world.setBlockAt(t.x, t.y, t.z, grown);
+          if (!this.player.creative) this.inventory.take(this.inventory.selected, 1);
           this.particles.blockBurst(t.x, t.y, t.z, B.Leaves, 8);
           this.events.onSwing();
           return;
         }
         if (t.id === B.Sapling) {
           if (this.world.growTree(t.x, t.y, t.z)) {
-            this.inventory.take(this.inventory.selected, 1);
+            if (!this.player.creative) this.inventory.take(this.inventory.selected, 1);
             this.particles.blockBurst(t.x, t.y + 1, t.z, B.Leaves, 10);
             this.events.onSwing();
           }
@@ -423,15 +454,17 @@ export class Interaction {
     if (!blockDef(this.world.getBlockAt(px, py, pz)).replaceable) return false;
     const liquid = bucketId === I.WaterBucket ? B.Water : B.Lava;
     this.world.setBlockAt(px, py, pz, liquid);
-    this.inventory.slots[this.inventory.selected] = { id: I.Bucket, count: 1 };
-    this.inventory.changed();
+    if (!this.player.creative) {
+      this.inventory.slots[this.inventory.selected] = { id: I.Bucket, count: 1 };
+      this.inventory.changed();
+    }
     this.sound.splash();
     this.events.onSwing();
     return true;
   }
 
   private shootBow(power: number): void {
-    if (this.inventory.removeById(I.Arrow, 1) < 1) return;
+    if (!this.player.creative && this.inventory.removeById(I.Arrow, 1) < 1) return;
     const origin = this.player.eyePosition();
     const dir = this.player.lookDirection();
     this.entities.shootArrow(
@@ -476,7 +509,7 @@ export class Interaction {
     }
 
     this.world.setBlockAt(px, py, pz, id, meta);
-    this.inventory.take(this.inventory.selected, 1);
+    if (!this.player.creative) this.inventory.take(this.inventory.selected, 1);
     this.sound.place(blockDef(id).sound);
     this.events.onSwing();
   }

@@ -16,13 +16,15 @@ import { IconRenderer } from './ui/icons';
 import { Hud } from './ui/hud';
 import { Screens } from './ui/screens';
 import { Menus } from './ui/menus';
+import { Chat } from './ui/chat';
 import { Sound } from './audio';
+import { CommandCtx, runCommand, completions, setCompletionCtx } from './commands';
 import {
-  WorldMeta, WorldSave, Options,
-  loadOptions, saveOptions, loadWorldSave, saveWorldSave,
+  WorldMeta, WorldSave, Options, GameRules, GameMode,
+  DEFAULT_RULES, loadOptions, saveOptions, loadWorldSave, saveWorldSave, updateWorldGamemode,
 } from './saves';
 
-type Mode = 'title' | 'loading' | 'playing' | 'paused' | 'screen' | 'dead';
+type Mode = 'title' | 'loading' | 'playing' | 'paused' | 'screen' | 'dead' | 'chat';
 
 interface Session {
   meta: WorldMeta;
@@ -36,6 +38,7 @@ interface Session {
   hud: Hud;
   screens: Screens;
   sky: Sky;
+  rules: GameRules;
 }
 
 const SPAWN_X = 8;
@@ -51,6 +54,7 @@ export class Game {
   private sound = new Sound();
   private icons: IconRenderer;
   private menus: Menus;
+  private chat: Chat;
   private options: Options;
 
   private session: Session | null = null;
@@ -101,6 +105,12 @@ export class Game {
       playClick: () => this.sound.click(),
     }, this.options);
 
+    this.chat = new Chat({
+      submit: (line) => this.onChatSubmit(line),
+      close: () => this.onChatClosed(),
+      complete: (line) => completions(line),
+    });
+
     this.wireGlobalInput();
 
     window.addEventListener('resize', () => this.onResize());
@@ -128,6 +138,8 @@ export class Game {
     this.els.loadingText.textContent = `Loading "${meta.name}"`;
 
     const save = loadWorldSave(meta.id) ?? { v: 2 as const, seed: meta.seed, time: 0.3, edits: {} };
+    const rules: GameRules = { ...DEFAULT_RULES, ...save.rules };
+    const gamemode: GameMode = save.gamemode ?? meta.gamemode ?? 'survival';
 
     const world = new World(this.scene, this.materials, save.seed, this.options.renderDistance);
     world.loadEdits(save.edits);
@@ -137,6 +149,7 @@ export class Game {
     sky.time = save.time;
 
     const player = new Player(world);
+    player.creative = gamemode === 'creative';
     const inventory = new Inventory();
     if (save.inventory) inventory.load(save.inventory);
     inventory.selected = save.selected ?? 0;
@@ -150,6 +163,7 @@ export class Game {
       hurtPlayer: (dmg, fx, fz) => this.hurtPlayer(dmg, fx, fz),
       playerPos: () => player.pos,
       playerAlive: () => player.alive,
+      playerTargetable: () => !player.creative,
     });
 
     const hud = new Hud(this.icons, inventory);
@@ -182,8 +196,11 @@ export class Game {
     const heldItem = new HeldItemView(this.camera, this.atlas.texture);
 
     this.session = {
-      meta, world, player, inventory, entities, particles, interaction, heldItem, hud, screens, sky,
+      meta, world, player, inventory, entities, particles, interaction, heldItem, hud, screens, sky, rules,
     };
+    this.applyRules();
+    this.applySessionOptions();
+    setCompletionCtx(this.commandCtx());
 
     player.onDamaged = () => this.sound.hurt();
     player.onDied = () => this.onPlayerDied();
@@ -249,10 +266,12 @@ export class Game {
     }
     this.camera.clear(); // held item
     this.session = null;
+    setCompletionCtx(null);
   }
 
   private quitToTitle(): void {
     // Close screens first so crafting-grid/cursor items are saved, not lost.
+    this.chat.close();
     this.session?.screens.close();
     this.save();
     this.disposeSession();
@@ -278,6 +297,7 @@ export class Game {
   private setMode(mode: Mode): void {
     this.mode = mode;
     this.els.hud.classList.toggle('hidden', mode === 'title' || mode === 'loading');
+    this.input.suppress = mode === 'chat';
 
     if (mode === 'playing') {
       this.menus.show(null);
@@ -287,7 +307,7 @@ export class Game {
       this.save();
     } else if (mode === 'dead') {
       this.menus.show('death');
-    } else if (mode === 'title' || mode === 'loading' || mode === 'screen') {
+    } else if (mode === 'title' || mode === 'loading' || mode === 'screen' || mode === 'chat') {
       this.menus.show(null);
     }
   }
@@ -303,6 +323,7 @@ export class Game {
 
     document.addEventListener('keydown', (e) => {
       if (e.repeat) return; // holding E must not close a just-opened screen
+      if (this.mode === 'chat') return; // the chat input handles its own keys
       if (this.mode === 'screen') {
         if (e.code === 'Escape' || e.code === 'KeyE') {
           this.session?.screens.close();
@@ -352,7 +373,87 @@ export class Game {
     if (!s) return;
     this.input.releaseLock();
     this.setMode('screen');
-    s.screens.open('inventory');
+    s.screens.open(s.player.creative ? 'creative' : 'inventory');
+  }
+
+  // ---------------- chat / commands ----------------
+
+  private openChat(prefill: string): void {
+    if (!this.session) return;
+    this.input.releaseLock();
+    this.setMode('chat');
+    this.chat.open(prefill);
+  }
+
+  private onChatSubmit(line: string): void {
+    if (line.startsWith('/')) {
+      const ctx = this.commandCtx();
+      if (ctx) {
+        this.chat.print(`§7> ${line}`);
+        runCommand(line.slice(1), ctx);
+      }
+    } else {
+      this.chat.print(`<Player> ${line}`);
+    }
+  }
+
+  private onChatClosed(): void {
+    // If the player died with chat open, the death-timer flow owns the mode.
+    if (this.mode === 'chat' && this.session?.player.alive) {
+      this.setMode('playing');
+    }
+  }
+
+  private commandCtx(): CommandCtx | null {
+    const s = this.session;
+    if (!s) return null;
+    return {
+      world: s.world,
+      player: s.player,
+      inventory: s.inventory,
+      sky: s.sky,
+      entities: s.entities,
+      rules: s.rules,
+      gamemode: () => (s.player.creative ? 'creative' : 'survival'),
+      setGamemode: (m) => this.setGamemode(m),
+      setRule: (key, value) => {
+        s.rules[key] = value;
+        this.applyRules();
+        this.save();
+      },
+      print: (msg) => this.chat.print(msg),
+      toast: (msg) => s.hud.toast(msg),
+      save: () => this.save(),
+    };
+  }
+
+  private setGamemode(m: GameMode): void {
+    const s = this.session;
+    if (!s) return;
+    s.player.creative = m === 'creative';
+    if (m !== 'creative') s.player.flying = false;
+    s.meta.gamemode = m;
+    updateWorldGamemode(s.meta.id, m);
+    this.save();
+  }
+
+  /** Push the session's game rules into the systems that consume them. */
+  private applyRules(): void {
+    const s = this.session;
+    if (!s) return;
+    s.entities.spawningEnabled = s.rules.doMobSpawning;
+    s.entities.griefingEnabled = s.rules.mobGriefing;
+    s.sky.cycleEnabled = s.rules.doDaylightCycle;
+  }
+
+  /** Push option toggles into session objects (called on start + change). */
+  private applySessionOptions(): void {
+    const s = this.session;
+    if (!s) return;
+    const o = this.options;
+    s.player.bobbingEnabled = o.viewBobbing;
+    s.sky.cloudsEnabled = o.clouds;
+    s.particles.density = o.particles === 'all' ? 1 : o.particles === 'decreased' ? 0.4 : 0.08;
   }
 
   // ---------------- bed / sleeping ----------------
@@ -408,26 +509,31 @@ export class Game {
     if (!s) return;
     this.sound.death();
     this.deathTimer = 1.2;
+    this.chat.close();
 
     // A container may be open: fold its grid/cursor back into the inventory
     // first so those items spill with everything else.
     s.screens.close();
 
-    // Spill the whole inventory + some XP, vanilla style.
     const { player, inventory, entities } = s;
-    const all = [...inventory.slots, ...inventory.armor];
-    for (const stack of all) {
-      if (!stack) continue;
-      const e = entities.dropItem({ ...stack }, player.pos.x, player.pos.y + 0.8, player.pos.z);
-      e.vel.set((Math.random() - 0.5) * 5, 2.5 + Math.random() * 2.5, (Math.random() - 0.5) * 5);
-      e.pickupDelay = 2;
+    if (!s.rules.keepInventory) {
+      // Spill the whole inventory + some XP, vanilla style.
+      const all = [...inventory.slots, ...inventory.armor];
+      for (const stack of all) {
+        if (!stack) continue;
+        const e = entities.dropItem({ ...stack }, player.pos.x, player.pos.y + 0.8, player.pos.z);
+        e.vel.set((Math.random() - 0.5) * 5, 2.5 + Math.random() * 2.5, (Math.random() - 0.5) * 5);
+        e.pickupDelay = 2;
+      }
+      inventory.clear();
+      const droppedXp = Math.min(100, player.level * 7);
+      if (droppedXp > 0) entities.spawnXp(droppedXp, player.pos.x, player.pos.y + 0.8, player.pos.z);
+      this.menus.setDeathScore(player.xp);
+      player.xp = 0;
+      player.addXp(0);
+    } else {
+      this.menus.setDeathScore(player.xp);
     }
-    inventory.clear();
-    const droppedXp = Math.min(100, player.level * 7);
-    if (droppedXp > 0) entities.spawnXp(droppedXp, player.pos.x, player.pos.y + 0.8, player.pos.z);
-    this.menus.setDeathScore(player.xp);
-    player.xp = 0;
-    player.addXp(0);
     this.save();
   }
 
@@ -452,6 +558,8 @@ export class Game {
       edits: s.world.serializeEdits(),
       blockEntities: s.world.serializeBlockEntities(),
       entities: s.entities.serialize(),
+      gamemode: s.player.creative ? 'creative' : 'survival',
+      rules: s.rules,
     };
     if (saveWorldSave(s.meta.id, data)) {
       s.world.editsDirty = false;
@@ -463,6 +571,7 @@ export class Game {
     saveOptions(o);
     this.sound.setVolume(o.volume);
     this.session?.world.setRenderDistance(o.renderDistance);
+    this.applySessionOptions();
     if (Math.abs(this.camera.fov - o.fov) > 0.5 && !this.session?.player.sprinting) {
       this.camera.fov = o.fov;
       this.camera.updateProjectionMatrix();
@@ -484,7 +593,7 @@ export class Game {
       return;
     }
 
-    const running = this.mode === 'playing' || this.mode === 'screen' || this.mode === 'dead';
+    const running = this.mode === 'playing' || this.mode === 'screen' || this.mode === 'dead' || this.mode === 'chat';
     const simDt = running ? dt : 0;
 
     if (this.mode === 'playing') {
@@ -510,6 +619,7 @@ export class Game {
     if (!s.player.alive && this.mode !== 'dead' && this.mode !== 'title') {
       this.deathTimer -= dt;
       if (this.deathTimer <= 0) {
+        this.chat.close();
         this.input.releaseLock();
         this.setMode('dead');
       }
@@ -554,7 +664,9 @@ export class Game {
   private updatePlaying(dt: number): void {
     const s = this.session!;
     const [mdx, mdy] = this.input.consumeMouseDelta();
-    if (s.player.alive) s.player.applyLook(mdx, mdy, this.options.sensitivity);
+    if (s.player.alive) {
+      s.player.applyLook(mdx, this.options.invertY ? -mdy : mdy, this.options.sensitivity);
+    }
 
     // Hotbar input
     const wheel = this.input.consumeWheel();
@@ -570,6 +682,10 @@ export class Game {
     }
     if (this.input.pressed('KeyE') && s.player.alive) {
       this.openInventory();
+      return;
+    }
+    if ((this.input.pressed('Slash') || this.input.pressed('KeyT')) && s.player.alive) {
+      this.openChat(this.input.pressed('Slash') ? '/' : '');
       return;
     }
     if (this.input.pressed('F3')) s.hud.toggleDebug();
@@ -598,7 +714,7 @@ export class Game {
     this.wasInWater = s.player.inWater;
 
     // Sprint FOV kick
-    const targetFov = this.options.fov * (s.player.sprinting ? 1.09 : 1);
+    const targetFov = this.options.fov * (s.player.sprinting && this.options.fovEffects ? 1.09 : 1);
     if (Math.abs(this.camera.fov - targetFov) > 0.05) {
       this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 10);
       this.camera.updateProjectionMatrix();
@@ -632,7 +748,7 @@ export class Game {
     const hours = Math.floor(s.sky.time * 24);
     const mins = Math.floor((s.sky.time * 24 % 1) * 60);
     return [
-      `WebCraft survival | FPS ${this.fps.toFixed(0)} | tris ${(info.render.triangles / 1000).toFixed(0)}k | draws ${info.render.calls}`,
+      `WebCraft ${s.player.creative ? 'creative' : 'survival'} | FPS ${this.fps.toFixed(0)} | tris ${(info.render.triangles / 1000).toFixed(0)}k | draws ${info.render.calls}`,
       `XYZ ${p.x.toFixed(2)} / ${p.y.toFixed(2)} / ${p.z.toFixed(2)}  chunk ${bx >> 4},${bz >> 4}`,
       `facing ${facing} (yaw ${yawDeg.toFixed(0)}°, pitch ${(s.player.pitch * 180 / Math.PI).toFixed(0)}°)`,
       `light sky ${s.world.getSkyAt(bx, eyeY, bz)} / block ${s.world.getBlockLightAt(bx, eyeY, bz)}  time ${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`,

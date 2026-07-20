@@ -17,6 +17,8 @@ export class Hud {
   private hungerEl = document.getElementById('hunger')!;
   private armorEl = document.getElementById('armor')!;
   private airEl = document.getElementById('air')!;
+  private statusRowsEl = document.getElementById('status-rows')!;
+  private xpWrapEl = document.getElementById('xp-wrap')!;
   private xpBarEl = document.getElementById('xp-fill')!;
   private xpLevelEl = document.getElementById('xp-level')!;
   private itemNameEl = document.getElementById('item-name')!;
@@ -97,9 +99,13 @@ export class Hud {
       Math.ceil(player.health), Math.floor(player.food), player.armorPoints,
       Math.ceil((player.air / MAX_AIR) * 10), player.level, Math.round(player.xpProgress * 100),
       player.headInWater ? 1 : 0, player.hurtTime > 0.3 ? 1 : 0,
+      player.creative ? 1 : 0,
     ].join(',');
     if (statKey !== this.lastStats) {
       this.lastStats = statKey;
+      // Creative hides survival vitals (hearts, hunger, air, XP), vanilla style.
+      this.statusRowsEl.style.display = player.creative ? 'none' : '';
+      this.xpWrapEl.style.display = player.creative ? 'none' : '';
       this.renderStats(player);
     }
 

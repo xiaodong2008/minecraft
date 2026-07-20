@@ -1,13 +1,13 @@
-import { ItemStack, itemDef, canStack, fuelTime, SMELTING } from '../items';
+import { ItemStack, itemDef, canStack, fuelTime, SMELTING, allItemIds } from '../items';
 import { armorId } from '../ids';
 import { matchRecipe } from '../crafting';
 import { Inventory } from '../inventory';
 import { SMELT_TIME, FurnaceState, ChestState } from '../world/world';
 import type { IconRenderer } from './icons';
 
-export type ScreenKind = 'inventory' | 'crafting' | 'furnace' | 'chest';
+export type ScreenKind = 'inventory' | 'crafting' | 'furnace' | 'chest' | 'creative';
 
-type Group = 'inv' | 'hotbar' | 'container' | 'craft' | 'armor' | 'result';
+type Group = 'inv' | 'hotbar' | 'container' | 'craft' | 'armor' | 'result' | 'picker';
 
 interface SlotSpec {
   get(): ItemStack | null;
@@ -110,6 +110,15 @@ export class Screens {
         const i = Number(e.code.slice(5)) - 1;
         const hotbarStack = this.inventory.slots[i];
         const hovStack = hov.get();
+        if (hov.group === 'picker') {
+          // Creative picker: number key drops a full stack into that hotbar slot.
+          if (hovStack) this.inventory.slots[i] = { id: hovStack.id, count: itemDef(hovStack.id).maxStack };
+          this.inventory.changed();
+          this.hooks.playClick();
+          this.renderAll();
+          e.preventDefault();
+          return;
+        }
         // Both directions must be legal (armor slots, furnace fuel, ...).
         if (hovStack && !this.slotAcceptsHotbar(i, hovStack)) return;
         if (hotbarStack && !hov.accepts(hotbarStack)) return;
@@ -185,6 +194,7 @@ export class Screens {
     else if (kind === 'crafting') this.buildCraftingScreen(panel);
     else if (kind === 'furnace') this.buildFurnaceScreen(panel);
     else if (kind === 'chest') this.buildChestScreen(panel, container as ChestState);
+    else if (kind === 'creative') this.buildCreativeScreen(panel);
 
     this.buildPlayerSection(panel);
     this.renderAll();
@@ -402,6 +412,48 @@ export class Screens {
     }));
   }
 
+  /**
+   * Creative item picker: an infinite-source grid of every item.
+   * Left-click puts a full stack on the cursor (same item clears it),
+   * right-click adds one, shift-click sends a stack to the inventory.
+   */
+  private buildCreativeScreen(panel: HTMLElement): void {
+    this.title(panel, 'Creative Inventory');
+
+    const search = document.createElement('input');
+    search.className = 'mc-input creative-search';
+    search.placeholder = 'Search Items';
+    panel.appendChild(search);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'creative-scroll';
+    panel.appendChild(wrap);
+
+    const build = (): void => {
+      this.slots = this.slots.filter((s) => s.group !== 'picker');
+      if (this.hovered?.group === 'picker') this.hovered = null;
+      wrap.innerHTML = '';
+      const q = search.value.trim().toLowerCase();
+      const ids = allItemIds().filter((id) => !q || itemDef(id).name.toLowerCase().includes(q));
+      const grid = document.createElement('div');
+      grid.className = 'slot-grid';
+      grid.style.gridTemplateColumns = 'repeat(9, 40px)';
+      for (const id of ids) {
+        grid.appendChild(this.makeSlotEl({
+          get: () => ({ id, count: 1 }),
+          set: () => {},
+          accepts: () => false,
+          group: 'picker',
+        }));
+      }
+      wrap.appendChild(grid);
+      this.renderAll();
+    };
+    search.addEventListener('input', build);
+    search.addEventListener('keydown', (e) => e.stopPropagation());
+    build();
+  }
+
   private buildPlayerSection(panel: HTMLElement): void {
     const spacer = document.createElement('div');
     spacer.style.height = '10px';
@@ -586,7 +638,7 @@ export class Screens {
     const max = itemDef(this.cursor.id).maxStack;
     for (const slot of this.slots) {
       if (this.cursor.count >= max) break;
-      if (slot.result) continue;
+      if (slot.result || slot.group === 'picker') continue;
       const s = slot.get();
       if (!s || !canStack(s, this.cursor)) continue;
       const take = Math.min(max - this.cursor.count, s.count);
@@ -600,6 +652,16 @@ export class Screens {
 
   private leftClick(spec: SlotSpec): void {
     const inSlot = spec.get();
+
+    if (spec.group === 'picker') {
+      const s = inSlot!;
+      if (this.cursor && this.cursor.id === s.id) {
+        this.cursor = null; // click same item: put it back
+      } else {
+        this.cursor = { id: s.id, count: itemDef(s.id).maxStack };
+      }
+      return;
+    }
 
     if (spec.result) {
       // Take the whole result (repeatedly merging onto cursor if same item).
@@ -658,6 +720,16 @@ export class Screens {
   private rightClick(spec: SlotSpec): void {
     const inSlot = spec.get();
 
+    if (spec.group === 'picker') {
+      const s = inSlot!;
+      if (!this.cursor) {
+        this.cursor = { id: s.id, count: 1 };
+      } else if (this.cursor.id === s.id && this.cursor.count < itemDef(s.id).maxStack) {
+        this.cursor.count++;
+      }
+      return;
+    }
+
     if (spec.result) {
       this.leftClick(spec);
       return;
@@ -703,6 +775,11 @@ export class Screens {
     const inSlot = spec.get();
     if (!inSlot) return;
     this.lastShiftMoved = { ...inSlot };
+
+    if (spec.group === 'picker') {
+      this.inventory.add(inSlot.id, itemDef(inSlot.id).maxStack);
+      return;
+    }
 
     if (spec.result) {
       // Craft/collect as much as possible.

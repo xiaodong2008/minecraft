@@ -15,6 +15,9 @@ interface P {
 
 /** Point-sprite particle system: block-break bursts, smoke, flames, hits. */
 export class Particles {
+  /** Options: 1 = all, 0.4 = decreased, 0.08 = minimal. */
+  density = 1;
+
   private geometry = new THREE.BufferGeometry();
   private positions = new Float32Array(MAX * 3);
   private colors = new Float32Array(MAX * 3);
@@ -46,6 +49,7 @@ export class Particles {
     r: number, g: number, b: number,
     life: number, gravity: number,
   ): void {
+    if (this.density < 1 && Math.random() > this.density) return;
     const i = this.head;
     this.head = (this.head + 1) % MAX;
     const p = this.particles[i];

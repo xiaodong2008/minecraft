@@ -16,6 +16,11 @@ export class Sky {
   /** 0..1, 0 = midnight, 0.25 = sunrise, 0.5 = noon, 0.75 = sunset. */
   time = 0.3;
 
+  /** Gamerule doDaylightCycle: when false, time stands still. */
+  cycleEnabled = true;
+  /** Options toggle: render the cloud plane. */
+  cloudsEnabled = true;
+
   private group = new THREE.Group();
   private sun: THREE.Mesh;
   private moon: THREE.Mesh;
@@ -95,7 +100,7 @@ export class Sky {
     renderDistanceChunks: number,
     cameraUnderwater: boolean,
   ): void {
-    this.time = (this.time + dt / DAY_LENGTH_S) % 1;
+    if (this.cycleEnabled) this.time = (this.time + dt / DAY_LENGTH_S) % 1;
 
     const h = this.sunHeight();
     const day = this.sunFactor();
@@ -133,6 +138,7 @@ export class Sky {
     this.starsMat.opacity = Math.max(0, 1 - day * 1.6);
 
     // Clouds drift and follow the camera horizontally.
+    this.clouds.visible = this.cloudsEnabled;
     this.clouds.position.x = camera.position.x;
     this.clouds.position.z = camera.position.z;
     const drift = performance.now() * 0.0000045;

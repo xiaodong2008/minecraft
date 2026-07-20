@@ -1,11 +1,29 @@
 import { WORLDS_INDEX_KEY, WORLD_KEY_PREFIX, OPTIONS_KEY, DEFAULT_RENDER_DISTANCE } from './constants';
 
+export type GameMode = 'survival' | 'creative';
+
+/** Per-world game rules, toggled with the /gamerule command. */
+export interface GameRules {
+  keepInventory: boolean;
+  doDaylightCycle: boolean;
+  doMobSpawning: boolean;
+  mobGriefing: boolean;
+}
+
+export const DEFAULT_RULES: GameRules = {
+  keepInventory: false,
+  doDaylightCycle: true,
+  doMobSpawning: true,
+  mobGriefing: true,
+};
+
 export interface WorldMeta {
   id: string;
   name: string;
   seed: number;
   created: number;
   lastPlayed: number;
+  gamemode?: GameMode;
 }
 
 export interface PlayerSave {
@@ -25,6 +43,8 @@ export interface WorldSave {
   edits: Record<string, number[]>;
   blockEntities?: Record<string, unknown>;
   entities?: { mobs?: unknown[]; items?: unknown[]; seeded?: string[] };
+  gamemode?: GameMode;
+  rules?: Partial<GameRules>;
 }
 
 export interface Options {
@@ -32,6 +52,18 @@ export interface Options {
   volume: number;
   sensitivity: number;
   fov: number;
+  /** GUI scale multiplier (0 = auto). */
+  guiScale: number;
+  /** View bobbing while walking. */
+  viewBobbing: boolean;
+  /** Camera FOV kick when sprinting. */
+  fovEffects: boolean;
+  /** Render clouds. */
+  clouds: boolean;
+  /** Particle density. */
+  particles: 'all' | 'decreased' | 'minimal';
+  /** Invert vertical mouse look. */
+  invertY: boolean;
 }
 
 export const DEFAULT_OPTIONS: Options = {
@@ -39,6 +71,12 @@ export const DEFAULT_OPTIONS: Options = {
   volume: 0.5,
   sensitivity: 1,
   fov: 75,
+  guiScale: 0,
+  viewBobbing: true,
+  fovEffects: true,
+  clouds: true,
+  particles: 'all',
+  invertY: false,
 };
 
 export function listWorlds(): WorldMeta[] {
@@ -65,18 +103,19 @@ export function parseSeed(input: string): number {
   return seed;
 }
 
-export function createWorld(name: string, seedInput: string): WorldMeta {
+export function createWorld(name: string, seedInput: string, gamemode: GameMode = 'survival'): WorldMeta {
   const meta: WorldMeta = {
     id: `${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`,
     name: name.trim() || 'New World',
     seed: parseSeed(seedInput),
     created: Date.now(),
     lastPlayed: Date.now(),
+    gamemode,
   };
   const list = listWorlds();
   list.push(meta);
   writeIndex(list);
-  const fresh: WorldSave = { v: 2, seed: meta.seed, time: 0.3, edits: {} };
+  const fresh: WorldSave = { v: 2, seed: meta.seed, time: 0.3, edits: {}, gamemode };
   localStorage.setItem(WORLD_KEY_PREFIX + meta.id, JSON.stringify(fresh));
   return meta;
 }
@@ -84,6 +123,16 @@ export function createWorld(name: string, seedInput: string): WorldMeta {
 export function deleteWorld(id: string): void {
   writeIndex(listWorlds().filter((w) => w.id !== id));
   localStorage.removeItem(WORLD_KEY_PREFIX + id);
+}
+
+/** Reflect a /gamemode change into the world list (shown on the select screen). */
+export function updateWorldGamemode(id: string, gamemode: GameMode): void {
+  const list = listWorlds();
+  const meta = list.find((w) => w.id === id);
+  if (meta) {
+    meta.gamemode = gamemode;
+    writeIndex(list);
+  }
 }
 
 export function loadWorldSave(id: string): WorldSave | null {
