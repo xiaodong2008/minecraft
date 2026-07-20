@@ -20,14 +20,16 @@ import type { Terrain, Biome } from './terrain';
 // --- region / site tuning ---
 const REGION_CHUNKS = 48;
 const REGION_BLOCKS = REGION_CHUNKS * CHUNK_SIZE; // 768
-const VILLAGE_CHANCE = 0.35;
+const VILLAGE_CHANCE = 0.55;
+/** Deterministic site candidates tried per hosting region. */
+const SITE_ATTEMPTS = 3;
 /**
  * Minimum distance from a village center to its region border. Must exceed
  * the maximum village half-extent (~46 blocks: path arm 45, buildings end at
  * arm length - 6 plus footprint + border) so layouts never cross region lines.
  */
 const EDGE_MARGIN = 100;
-const MAX_SPREAD = 7; // max surface height difference across the site probes
+const MAX_SPREAD = 10; // max surface height difference across the site probes
 const MIN_GROUND = SEA_LEVEL + 2; // every probe must be dry land
 
 /** Center + 8 ring points (radius ~25) that must be flat, dry ground. */
@@ -170,8 +172,19 @@ export class Structures {
   private computeVillage(rx: number, rz: number): Village | null {
     if (hash2(rx, rz, this.seed ^ S_EXIST) >= VILLAGE_CHANCE) return null;
     const span = REGION_BLOCKS - 2 * EDGE_MARGIN;
-    const cx = rx * REGION_BLOCKS + EDGE_MARGIN + Math.floor(hash2(rx, rz, this.seed ^ S_CX) * span);
-    const cz = rz * REGION_BLOCKS + EDGE_MARGIN + Math.floor(hash2(rx, rz, this.seed ^ S_CZ) * span);
+    for (let attempt = 0; attempt < SITE_ATTEMPTS; attempt++) {
+      const cx = rx * REGION_BLOCKS + EDGE_MARGIN +
+        Math.floor(hash2(rx, rz, this.seed ^ (S_CX + attempt * 0x9e37)) * span);
+      const cz = rz * REGION_BLOCKS + EDGE_MARGIN +
+        Math.floor(hash2(rx, rz, this.seed ^ (S_CZ + attempt * 0x79b9)) * span);
+      const site = this.validateSite(cx, cz);
+      if (site) return this.buildVillage(cx, cz, site);
+    }
+    return null;
+  }
+
+  /** Returns the biome when (cx, cz) is a valid, flat, dry village site. */
+  private validateSite(cx: number, cz: number): Biome | null {
     const biome = this.terrain.biomeAt(cx, cz);
     if (biome !== 'plains' && biome !== 'desert') return null;
     let lo = WORLD_HEIGHT;
@@ -182,8 +195,7 @@ export class Structures {
       if (h < lo) lo = h;
       if (h > hi) hi = h;
     }
-    if (hi - lo > MAX_SPREAD) return null;
-    return this.buildVillage(cx, cz, biome);
+    return hi - lo > MAX_SPREAD ? null : biome;
   }
 
   // ---------------- layout build (once per village, memoized) ----------------
