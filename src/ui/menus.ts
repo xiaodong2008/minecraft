@@ -426,6 +426,8 @@ export class Menus {
       (v) => { this.options.sensitivity = v; }, (v) => `${Math.round(v * 100)}%`);
     bind('opt-volume', 'Sound', () => this.options.volume,
       (v) => { this.options.volume = v; }, (v) => v <= 0 ? 'OFF' : `${Math.round(v * 100)}%`);
+    bind('opt-music', 'Music', () => this.options.musicVolume,
+      (v) => { this.options.musicVolume = v; }, (v) => v <= 0 ? 'OFF' : `${Math.round(v * 100)}%`);
 
     // Cycling option buttons (vanilla style: the label carries the state).
     const cycle = (id: string, advance: () => void): void => {
@@ -460,6 +462,7 @@ export class Menus {
     sync('opt-dist', 'Render Distance', this.options.renderDistance, (v) => `${v} chunks`);
     sync('opt-sens', 'Sensitivity', this.options.sensitivity, (v) => `${Math.round(v * 100)}%`);
     sync('opt-volume', 'Sound', this.options.volume, (v) => v <= 0 ? 'OFF' : `${Math.round(v * 100)}%`);
+    sync('opt-music', 'Music', this.options.musicVolume, (v) => v <= 0 ? 'OFF' : `${Math.round(v * 100)}%`);
     this.syncOptionButtons();
   }
 
