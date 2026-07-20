@@ -48,46 +48,59 @@
 
       <!-- title -->
       <div id="menu-title" class="overlay menu dirt-bg">
-        <div class="menu-inner">
-          <div class="logo">WEBCRAFT</div>
-          <div id="splash">100% browser!</div>
-          <div class="menu-stack">
+        <div class="menu-inner title-inner">
+          <div class="logo-wrap">
+            <div class="logo">WEBCRAFT</div>
+            <div id="splash">100% browser!</div>
+          </div>
+          <div class="menu-stack title-stack">
             <button id="btn-singleplayer" class="mc-btn wide">Singleplayer</button>
             <button class="mc-btn wide" disabled>Multiplayer</button>
             <button id="btn-title-options" class="mc-btn wide">Options...</button>
           </div>
-          <div class="corner-text left">WebCraft — a Minecraft-style survival game</div>
-          <div class="corner-text right">Procedural, zero assets</div>
+          <div class="corner-text left">WebCraft (procedural, zero assets)</div>
+          <div class="corner-text right">Copyright WebCraft. Do not distribute!</div>
         </div>
       </div>
 
       <!-- world select -->
       <div id="menu-worlds" class="overlay menu dirt-bg hidden">
-        <div class="menu-inner">
+        <div class="menu-inner menu-sheet worlds-inner">
           <h2 class="menu-heading">Select World</h2>
           <div id="world-list"></div>
-          <div class="menu-row2">
-            <button id="btn-world-play" class="mc-btn half" disabled>Play Selected World</button>
-            <button id="btn-world-create" class="mc-btn half">Create New World</button>
-          </div>
-          <div class="menu-row2">
-            <button id="btn-world-delete" class="mc-btn half danger" disabled>Delete</button>
-            <button id="btn-world-back" class="mc-btn half">Cancel</button>
+          <div class="sheet-footer">
+            <div class="menu-row2">
+              <button id="btn-world-play" class="mc-btn half" disabled>Play Selected World</button>
+              <button id="btn-world-create" class="mc-btn half">Create New World</button>
+            </div>
+            <div class="menu-row2">
+              <button id="btn-world-delete" class="mc-btn half" disabled>Delete</button>
+              <button id="btn-world-back" class="mc-btn half">Cancel</button>
+            </div>
           </div>
         </div>
       </div>
 
       <!-- create world -->
       <div id="menu-create" class="overlay menu dirt-bg hidden">
-        <div class="menu-inner narrow">
+        <div class="menu-inner narrow menu-sheet">
           <h2 class="menu-heading">Create New World</h2>
-          <label class="mc-label" for="inp-world-name">World Name</label>
-          <input id="inp-world-name" class="mc-input" value="New World" maxlength="32" />
-          <label class="mc-label" for="inp-world-seed">Seed for the world generator</label>
-          <input id="inp-world-seed" class="mc-input" placeholder="" maxlength="32" />
-          <div id="seed-hint" class="mc-hint">Leave blank for a random seed</div>
-          <div class="mc-hint">Game Mode: Survival</div>
-          <div class="menu-stack">
+          <div class="sheet-body">
+            <div class="field-wrap">
+              <label class="mc-label" for="inp-world-name">World Name</label>
+              <input id="inp-world-name" class="mc-input" value="New World" maxlength="32" />
+            </div>
+            <div class="field-wrap">
+              <label class="mc-label" for="inp-world-seed">Seed for the world generator</label>
+              <input id="inp-world-seed" class="mc-input" placeholder="" maxlength="32" />
+              <div id="seed-hint" class="mc-hint">Leave blank for a random seed</div>
+            </div>
+            <div class="field-wrap">
+              <button id="btn-create-gamemode" class="mc-btn wide">Game Mode: Survival</button>
+              <div id="gamemode-desc" class="mc-hint center">Search for resources, crafting, gain levels, health and hunger</div>
+            </div>
+          </div>
+          <div class="sheet-footer">
             <button id="btn-create-go" class="mc-btn wide">Create New World</button>
             <button id="btn-create-back" class="mc-btn wide">Cancel</button>
           </div>
@@ -96,48 +109,81 @@
 
       <!-- options -->
       <div id="menu-options" class="overlay menu dirt-bg hidden">
-        <div class="menu-inner narrow">
+        <div class="menu-inner options-inner menu-sheet">
           <h2 class="menu-heading">Options</h2>
-          <div class="opt-grid">
-            <div class="mc-slider">
-              <span id="opt-dist-label">Render Distance</span>
-              <input type="range" id="opt-dist" min="4" max="12" step="1" value="7" />
-            </div>
-            <div class="mc-slider">
-              <span id="opt-volume-label">Sound</span>
-              <input type="range" id="opt-volume" min="0" max="1" step="0.05" value="0.5" />
-            </div>
-            <div class="mc-slider">
-              <span id="opt-sens-label">Sensitivity</span>
-              <input type="range" id="opt-sens" min="0.2" max="2.5" step="0.05" value="1" />
-            </div>
-            <div class="mc-slider">
-              <span id="opt-fov-label">FOV</span>
-              <input type="range" id="opt-fov" min="60" max="110" step="1" value="75" />
+          <div class="sheet-body">
+            <div class="opt-grid">
+              <div class="mc-slider">
+                <span id="opt-fov-label">FOV: 75</span>
+                <input type="range" id="opt-fov" min="60" max="110" step="1" value="75" />
+              </div>
+              <div class="mc-slider">
+                <span id="opt-dist-label">Render Distance: 7 chunks</span>
+                <input type="range" id="opt-dist" min="4" max="12" step="1" value="7" />
+              </div>
+              <div class="mc-slider">
+                <span id="opt-sens-label">Sensitivity: 100%</span>
+                <input type="range" id="opt-sens" min="0.2" max="2.5" step="0.05" value="1" />
+              </div>
+              <div class="mc-slider">
+                <span id="opt-volume-label">Sound: 50%</span>
+                <input type="range" id="opt-volume" min="0" max="1" step="0.05" value="0.5" />
+              </div>
+              <button id="btn-opt-guiscale" class="mc-btn opt">GUI Scale: Auto</button>
+              <button id="btn-opt-bobbing" class="mc-btn opt">View Bobbing: ON</button>
+              <button id="btn-opt-foveffects" class="mc-btn opt">FOV Effects: ON</button>
+              <button id="btn-opt-clouds" class="mc-btn opt">Clouds: ON</button>
+              <button id="btn-opt-particles" class="mc-btn opt">Particles: All</button>
+              <button id="btn-opt-inverty" class="mc-btn opt">Invert Mouse: OFF</button>
             </div>
           </div>
-          <div class="menu-stack">
+          <div class="sheet-footer">
             <button id="btn-options-done" class="mc-btn wide">Done</button>
           </div>
         </div>
       </div>
 
-      <!-- pause -->
+      <!-- pause ("Game Menu") -->
       <div id="menu-pause" class="overlay pause-bg hidden">
         <div class="menu-inner">
           <h2 class="menu-heading">Game Menu</h2>
           <div class="menu-stack">
             <button id="btn-resume" class="mc-btn wide">Back to Game</button>
-            <button id="btn-pause-options" class="mc-btn wide">Options...</button>
+            <div class="menu-row2">
+              <button id="btn-pause-options" class="mc-btn half">Options...</button>
+              <button id="btn-pause-controls" class="mc-btn half">Controls...</button>
+            </div>
             <button id="btn-quit" class="mc-btn wide">Save and Quit to Title</button>
           </div>
-          <div class="controls">
-            <div><b>WASD</b> move</div><div><b>Space</b> jump</div>
-            <div><b>Double-tap W / Ctrl</b> sprint</div><div><b>Shift</b> sneak</div>
-            <div><b>Left click</b> mine / attack</div><div><b>Right click</b> place / use / eat</div>
-            <div><b>E</b> inventory</div><div><b>Q</b> drop item</div>
-            <div><b>Wheel / 1–9</b> hotbar</div><div><b>F3</b> debug</div>
-            <div><b>Shift-click</b> quick-move items</div><div><b>Bed</b> sets spawn, sleeps at night</div>
+        </div>
+      </div>
+
+      <!-- controls (read-only keybind list) -->
+      <div id="menu-controls" class="overlay pause-bg hidden">
+        <div class="menu-inner controls-inner menu-sheet">
+          <h2 class="menu-heading">Controls</h2>
+          <div class="sheet-body">
+            <div class="controls-list">
+              <div class="ctl-row"><span class="ctl-name">Move</span><span class="ctl-key">W A S D</span></div>
+              <div class="ctl-row"><span class="ctl-name">Jump</span><span class="ctl-key">Space</span></div>
+              <div class="ctl-row"><span class="ctl-name">Sprint</span><span class="ctl-key">Ctrl / Double-tap W</span></div>
+              <div class="ctl-row"><span class="ctl-name">Sneak</span><span class="ctl-key">Shift</span></div>
+              <div class="ctl-row"><span class="ctl-name">Mine / Attack</span><span class="ctl-key">Left Click</span></div>
+              <div class="ctl-row"><span class="ctl-name">Place / Use / Eat</span><span class="ctl-key">Right Click</span></div>
+              <div class="ctl-row"><span class="ctl-name">Inventory</span><span class="ctl-key">E</span></div>
+              <div class="ctl-row"><span class="ctl-name">Drop Item</span><span class="ctl-key">Q</span></div>
+              <div class="ctl-row"><span class="ctl-name">Drop Stack</span><span class="ctl-key">Ctrl + Q</span></div>
+              <div class="ctl-row"><span class="ctl-name">Hotbar</span><span class="ctl-key">1-9 / Wheel</span></div>
+              <div class="ctl-row"><span class="ctl-name">Chat</span><span class="ctl-key">T</span></div>
+              <div class="ctl-row"><span class="ctl-name">Command</span><span class="ctl-key">/</span></div>
+              <div class="ctl-row"><span class="ctl-name">Debug Info</span><span class="ctl-key">F3</span></div>
+              <div class="ctl-row"><span class="ctl-name">Quick-move Item</span><span class="ctl-key">Shift + Click</span></div>
+              <div class="ctl-row"><span class="ctl-name">Fly (Creative)</span><span class="ctl-key">Double-tap Space</span></div>
+              <div class="ctl-row"><span class="ctl-name">Pause</span><span class="ctl-key">Escape</span></div>
+            </div>
+          </div>
+          <div class="sheet-footer">
+            <button id="btn-controls-done" class="mc-btn wide">Done</button>
           </div>
         </div>
       </div>
@@ -158,7 +204,7 @@
       <div id="loading" class="overlay menu dirt-bg hidden">
         <div class="menu-inner narrow center">
           <p id="loading-text">Loading world</p>
-          <p class="mc-hint">Building terrain...</p>
+          <p class="mc-hint center">Building terrain...</p>
           <div class="bar"><div id="loading-bar"></div></div>
         </div>
       </div>
