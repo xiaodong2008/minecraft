@@ -43,12 +43,10 @@ button { font-family: inherit; }
   z-index: 20;
 }
 
-/* Vanilla "dirt screen": tiled dirt darkened by a flat black overlay. */
+/* Vanilla "dirt screen": the tile from buildDirtBackgroundURL is pre-darkened. */
 .dirt-bg {
   background-color: #2c2013;
-  background-image:
-    linear-gradient(rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0.55)),
-    var(--dirt-url, linear-gradient(#4d3a26, #4d3a26));
+  background-image: var(--dirt-url, linear-gradient(#4d3a26, #4d3a26));
   background-size: 128px 128px;
   image-rendering: pixelated;
 }
