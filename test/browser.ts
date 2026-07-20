@@ -826,6 +826,42 @@ async function main(): Promise<void> {
     errors.push(`air bar did not hide on land: ${JSON.stringify(airOnLand)}`);
   }
 
+  // --- Command suggestions: popup lists matches, Tab accepts
+  await page.evaluate(() => {
+    const g = (window as any).game;
+    if (g.mode !== 'playing') g.setMode('playing');
+    g.openChat('');
+  });
+  await sleep(200);
+  await page.type('#chat-input', '/ga');
+  await sleep(200);
+  const suggestState = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.chat-suggest-row')].map((r) => r.textContent);
+    return { rows, visible: !document.querySelector('.chat-suggest')?.classList.contains('hidden') };
+  });
+  await page.keyboard.press('Tab');
+  await sleep(100);
+  const afterTab = await page.evaluate(() => (document.getElementById('chat-input') as HTMLInputElement).value);
+  console.log('  suggestions:', JSON.stringify({ suggestState, afterTab }));
+  if (!suggestState.visible || !suggestState.rows.some((r) => r && r.includes('gamemode'))) {
+    errors.push(`suggestion popup missing: ${JSON.stringify(suggestState)}`);
+  }
+  if (!afterTab.startsWith('/gamemode')) {
+    errors.push(`Tab did not accept suggestion: "${afterTab}"`);
+  }
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await sleep(200);
+
+  // --- /weather rain via command + weather state
+  await runChat('/weather rain');
+  const weatherState = await page.evaluate(() => (window as any).game.session.weather.kind);
+  console.log('  /weather rain ->', weatherState);
+  if (weatherState !== 'rain') errors.push(`/weather rain failed: ${weatherState}`);
+  await sleep(1200);
+  await shot('18-rain');
+  await runChat('/weather clear');
+
   // --- Save & reload: quit to title, load the same world from the list
   await page.evaluate((stoneId) => {
     const g = (window as any).game;

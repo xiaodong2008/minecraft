@@ -69,23 +69,59 @@ export function runCommand(line: string, ctx: CommandCtx): void {
   }
 }
 
+/** Rich completion data for one input line (drives the chat suggestion UI). */
+export interface SuggestResult {
+  /** Candidates for the token being completed (prefix-filtered, sorted). */
+  suggestions: string[];
+  /** Char index in the input line where the token being completed starts. */
+  from: number;
+  /** Usage of the matched command, once the command name is complete. */
+  usage?: string;
+}
+
 /**
- * Tab-completion candidates for a raw input line (with leading slash).
- * Completes command names, then per-argument values.
+ * Token-aware suggestions for a raw input line (with leading slash).
+ * Token 0 completes command names; later tokens defer to the command's
+ * completeArg(argIndex, ctx). Matching is case-insensitive.
  */
-export function completions(line: string): string[] {
-  if (!line.startsWith('/')) return [];
+export function suggest(line: string): SuggestResult {
+  if (!line.startsWith('/')) return { suggestions: [], from: line.length };
   const body = line.slice(1);
-  const parts = body.split(/\s+/);
-  if (parts.length <= 1 && !body.endsWith(' ')) {
-    const prefix = (parts[0] ?? '').toLowerCase();
-    return [...COMMANDS.keys()].filter((n) => n.startsWith(prefix)).sort();
+
+  // Tokenize with positions so `from` maps back into the full line.
+  const tokens: { text: string; start: number }[] = [];
+  const re = /\S+/g;
+  for (let m = re.exec(body); m; m = re.exec(body)) {
+    tokens.push({ text: m[0], start: m.index + 1 });
   }
-  const cmd = COMMANDS.get(parts[0].toLowerCase());
-  if (!cmd?.completeArg) return [];
-  const argIndex = body.endsWith(' ') ? parts.length - 1 : parts.length - 2;
-  const prefix = (body.endsWith(' ') ? '' : parts[parts.length - 1]).toLowerCase();
-  return cmd.completeArg(argIndex, CTX_FOR_COMPLETE!).filter((v) => v.toLowerCase().startsWith(prefix));
+  const atBoundary = body === '' || /\s$/.test(body);
+  const current = atBoundary ? { text: '', start: line.length } : tokens[tokens.length - 1];
+  const tokenIndex = atBoundary ? tokens.length : tokens.length - 1;
+  const prefix = current.text.toLowerCase();
+
+  if (tokenIndex === 0) {
+    // Still typing the command name itself.
+    const names = [...COMMANDS.keys()].filter((n) => n.startsWith(prefix)).sort();
+    const result: SuggestResult = { suggestions: names, from: current.start };
+    const exact = COMMANDS.get(prefix);
+    if (exact) result.usage = exact.usage;
+    return result;
+  }
+
+  const cmd = COMMANDS.get(tokens[0].text.toLowerCase());
+  if (!cmd) return { suggestions: [], from: current.start };
+  const values = cmd.completeArg && CTX_FOR_COMPLETE
+    ? cmd.completeArg(tokenIndex - 1, CTX_FOR_COMPLETE)
+    : [];
+  const suggestions = values
+    .filter((v) => v.toLowerCase().startsWith(prefix))
+    .sort((a, b) => a.localeCompare(b));
+  return { suggestions, from: current.start, usage: cmd.usage };
+}
+
+/** Back-compat wrapper: just the candidate strings for `line`. */
+export function completions(line: string): string[] {
+  return suggest(line).suggestions;
 }
 
 /** completions() needs a ctx for context-sensitive values; game keeps it fresh. */
@@ -274,10 +310,21 @@ registerCommand({
 
 registerCommand({
   name: 'weather',
-  usage: '/weather <clear|rain|thunder>',
-  description: 'Change the weather',
-  run(_args, ctx) {
-    ctx.print('§7Weather is always clear in WebCraft');
+  usage: '/weather <clear|rain|thunder> [durationSeconds]',
+  description: 'Change (or query) the weather',
+  run(args, ctx) {
+    const usage = '/weather <clear|rain|thunder> [durationSeconds]';
+    if (args.length === 0) {
+      ctx.print(`§7Weather is currently: §f${ctx.weather()}`);
+      return;
+    }
+    const arg = args[0].toLowerCase();
+    const kind: WeatherKind | null =
+      arg === 'clear' || arg === 'rain' || arg === 'thunder' ? arg : null;
+    if (!kind) fail(`Usage: ${usage}`);
+    const duration = parseCountArg(args[1], 0, 1, 1_000_000, usage);
+    ctx.setWeather(kind, duration);
+    ctx.print(`Set the weather to ${kind === 'thunder' ? 'rain & thunder' : kind}`);
   },
   completeArg(i) {
     return i === 0 ? ['clear', 'rain', 'thunder'] : [];
@@ -528,6 +575,44 @@ registerCommand({
   completeArg(i) {
     if (i <= 2) return ['~'];
     if (i === 3) return uniqueKeys(blockEntries());
+    return [];
+  },
+});
+
+const FILL_MAX_VOLUME = 32768;
+
+registerCommand({
+  name: 'fill',
+  usage: '/fill <x1> <y1> <z1> <x2> <y2> <z2> <block>',
+  description: 'Fill a region with a block (~ = relative, max 32768 blocks)',
+  run(args, ctx) {
+    const usage = '/fill <x1> <y1> <z1> <x2> <y2> <z2> <block>';
+    if (args.length < 7) fail(`Usage: ${usage}`);
+    const p = ctx.player.pos;
+    const base = [p.x, p.y, p.z];
+    const c = args.slice(0, 6).map((raw, i) => Math.floor(parseCoord(raw, base[i % 3], usage)));
+    const entry = resolveEntry(args.slice(6).join('_'), blockEntries(), 'block');
+    const x0 = Math.min(c[0], c[3]), x1 = Math.max(c[0], c[3]);
+    const y0 = Math.min(c[1], c[4]), y1 = Math.max(c[1], c[4]);
+    const z0 = Math.min(c[2], c[5]), z1 = Math.max(c[2], c[5]);
+    const volume = (x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1);
+    if (volume > FILL_MAX_VOLUME) {
+      fail(`Too many blocks in the specified area (maximum ${FILL_MAX_VOLUME}, specified ${volume})`);
+    }
+    let filled = 0;
+    for (let y = y0; y <= y1; y++) {
+      for (let z = z0; z <= z1; z++) {
+        for (let x = x0; x <= x1; x++) {
+          if (ctx.world.setBlockAt(x, y, z, entry.id)) filled++;
+        }
+      }
+    }
+    if (filled === 0) fail('No blocks were filled');
+    ctx.print(`Successfully filled ${filled} blocks`);
+  },
+  completeArg(i) {
+    if (i <= 5) return ['~'];
+    if (i === 6) return uniqueKeys(blockEntries());
     return [];
   },
 });
