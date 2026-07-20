@@ -48,11 +48,12 @@ interface CreativeTab {
 
 const TAB_BUILDING = 0;
 const TAB_DECORATION = 1;
-const TAB_FOOD = 2;
-const TAB_COMBAT = 3;
-const TAB_MATERIALS = 4;
+const TAB_REDSTONE = 2;
+const TAB_FOOD = 3;
+const TAB_COMBAT = 4;
+const TAB_MATERIALS = 5;
 /** Pseudo-tab: search box over the full item list. */
-const TAB_SEARCH = 5;
+const TAB_SEARCH = 6;
 
 /** Stragglers the predicates in classifyItem would misfile (vanilla parity). */
 const TAB_OVERRIDES = new Map<number, number>([
@@ -74,6 +75,15 @@ const TAB_OVERRIDES = new Map<number, number>([
   [I.WaterBucket, TAB_COMBAT],
   [I.LavaBucket, TAB_COMBAT],
   [I.MilkBucket, TAB_COMBAT], // has .food, but vanilla files it with the buckets
+  // Redstone tab (vanilla parity)
+  [I.Redstone, TAB_REDSTONE],
+  [B.RedstoneOre, TAB_REDSTONE],
+  [B.RedstoneTorch, TAB_REDSTONE],
+  [B.Lever, TAB_REDSTONE],
+  [B.StoneButton, TAB_REDSTONE],
+  [B.PressurePlate, TAB_REDSTONE],
+  [B.RedstoneLamp, TAB_REDSTONE],
+  [B.RedstoneBlock, TAB_REDSTONE],
 ]);
 
 function classifyItem(id: number): number {
@@ -99,6 +109,7 @@ export function creativeTabs(): CreativeTab[] {
   const tabs: CreativeTab[] = [
     { name: 'Building Blocks', iconId: B.Brick, ids: [] },
     { name: 'Decoration', iconId: B.Poppy, ids: [] },
+    { name: 'Redstone', iconId: I.Redstone, ids: [] },
     { name: 'Foodstuffs', iconId: I.GoldenApple, ids: [] },
     { name: 'Tools & Combat', iconId: toolId(4, 0), ids: [] }, // diamond sword
     { name: 'Materials', iconId: I.IronIngot, ids: [] },

@@ -10,6 +10,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "smoke": "tsx test/smoke.ts",
+    "redstonetest": "tsx test/redstone.ts",
     "browsertest": "tsx test/browser.ts"
   },
   "dependencies": {
