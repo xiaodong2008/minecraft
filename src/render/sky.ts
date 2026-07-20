@@ -7,6 +7,7 @@ const DAY_COLOR = new THREE.Color(0.478, 0.65, 1.0);
 const NIGHT_COLOR = new THREE.Color(0.012, 0.02, 0.055);
 const SUNSET_COLOR = new THREE.Color(0.98, 0.48, 0.25);
 const WATER_FOG_COLOR = new THREE.Color(0.06, 0.18, 0.45);
+const FLASH_COLOR = new THREE.Color(1, 1, 1);
 
 /**
  * Day-night cycle: sky color, sun/moon billboards, stars, pixel clouds and the
@@ -21,9 +22,16 @@ export class Sky {
   /** Options toggle: render the cloud plane. */
   cloudsEnabled = true;
 
+  /** Storm overcast 0..1, driven by Weather: grays the sky, dims lighting. */
+  rainLevel = 0;
+  /** Lightning flash 0..1: Weather sets 1 on a strike, decays here. */
+  flash = 0;
+
   private group = new THREE.Group();
   private sun: THREE.Mesh;
+  private sunMat: THREE.MeshBasicMaterial;
   private moon: THREE.Mesh;
+  private moonMat: THREE.MeshBasicMaterial;
   private stars: THREE.Points;
   private starsMat: THREE.PointsMaterial;
   private clouds: THREE.Mesh;
@@ -32,19 +40,16 @@ export class Sky {
 
   private skyColor = new THREE.Color();
   private fogColor = new THREE.Color();
+  private stormGray = new THREE.Color();
 
   constructor(scene: THREE.Scene) {
     const sunTex = buildSunTexture();
     const moonTex = buildMoonTexture();
 
-    this.sun = new THREE.Mesh(
-      new THREE.PlaneGeometry(140, 140),
-      new THREE.MeshBasicMaterial({ map: sunTex, transparent: true, fog: false, depthWrite: false }),
-    );
-    this.moon = new THREE.Mesh(
-      new THREE.PlaneGeometry(90, 90),
-      new THREE.MeshBasicMaterial({ map: moonTex, transparent: true, fog: false, depthWrite: false }),
-    );
+    this.sunMat = new THREE.MeshBasicMaterial({ map: sunTex, transparent: true, fog: false, depthWrite: false });
+    this.sun = new THREE.Mesh(new THREE.PlaneGeometry(140, 140), this.sunMat);
+    this.moonMat = new THREE.MeshBasicMaterial({ map: moonTex, transparent: true, fog: false, depthWrite: false });
+    this.moon = new THREE.Mesh(new THREE.PlaneGeometry(90, 90), this.moonMat);
 
     // Stars on a unit sphere (group is repositioned to the camera each frame).
     const starCount = 700;
@@ -84,12 +89,12 @@ export class Sky {
     return Math.sin((this.time - 0.25) * Math.PI * 2);
   }
 
-  /** Scale factor applied to sky light, 0.14 at night .. 1 at day. */
+  /** Scale factor applied to sky light, 0.14 at night .. 1 at day; storms dim it. */
   sunFactor(): number {
     const h = this.sunHeight();
     const t = Math.min(1, Math.max(0, (h + 0.12) / 0.34));
     const smooth = t * t * (3 - 2 * t);
-    return 0.14 + 0.86 * smooth;
+    return (0.14 + 0.86 * smooth) * (1 - 0.35 * this.rainLevel);
   }
 
   update(
@@ -105,10 +110,23 @@ export class Sky {
     const h = this.sunHeight();
     const day = this.sunFactor();
 
-    // Sky color: night -> day, with a sunset/sunrise tint near the horizon.
-    this.skyColor.copy(NIGHT_COLOR).lerp(DAY_COLOR, (day - 0.14) / 0.86);
-    const sunsetness = Math.max(0, 1 - Math.abs(h) * 5) * 0.55;
+    // Sky color: night -> day, with a sunset/sunrise tint near the horizon
+    // (the tint is suppressed while overcast).
+    this.skyColor.copy(NIGHT_COLOR).lerp(DAY_COLOR, Math.max(0, (day - 0.14) / 0.86));
+    const sunsetness = Math.max(0, 1 - Math.abs(h) * 5) * 0.55 * (1 - this.rainLevel);
     this.skyColor.lerp(SUNSET_COLOR, sunsetness);
+
+    // Storm overcast: wash the sky toward a flat gray that follows daylight.
+    if (this.rainLevel > 0) {
+      this.stormGray.setScalar(0.08 + day * 0.3);
+      this.skyColor.lerp(this.stormGray, 0.5 * this.rainLevel);
+    }
+
+    // Lightning flash: whites out sky + fog for a moment, then decays.
+    if (this.flash > 0) {
+      this.skyColor.lerp(FLASH_COLOR, Math.min(1, this.flash * 0.8));
+      this.flash = Math.max(0, this.flash - dt * 3);
+    }
 
     scene.background = this.skyColor;
 
@@ -135,7 +153,11 @@ export class Sky {
     this.sun.lookAt(camera.position);
     this.moon.lookAt(camera.position);
 
-    this.starsMat.opacity = Math.max(0, 1 - day * 1.6);
+    // Overcast hides sun, moon and stars.
+    const celestial = 1 - 0.85 * this.rainLevel;
+    this.sunMat.opacity = celestial;
+    this.moonMat.opacity = celestial;
+    this.starsMat.opacity = Math.max(0, 1 - day * 1.6) * (1 - 0.9 * this.rainLevel);
 
     // Clouds drift and follow the camera horizontally.
     this.clouds.visible = this.cloudsEnabled;
@@ -143,6 +165,7 @@ export class Sky {
     this.clouds.position.z = camera.position.z;
     const drift = performance.now() * 0.0000045;
     this.cloudTex.offset.set(camera.position.x / 500 + drift * 8, -camera.position.z / 500);
-    this.cloudsMat.opacity = 0.2 + day * 0.35;
+    this.cloudsMat.opacity = 0.2 + day * 0.35 + 0.3 * this.rainLevel;
+    this.cloudsMat.color.setScalar(1 - 0.5 * this.rainLevel);
   }
 }
