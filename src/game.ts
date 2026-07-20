@@ -184,6 +184,26 @@ export class Game {
     this.els.loading.classList.remove('hidden');
     this.els.loadingText.textContent = `Loading "${meta.name}"`;
 
+    try {
+      await this.buildSession(meta);
+      this.els.loading.classList.add('hidden');
+      this.saveTimer = 0;
+      this.setMode('paused');
+    } catch (err) {
+      // Never trap the player on the loading screen: clean up and go home.
+      console.error('World load failed:', err);
+      this.disposeSession();
+      for (const child of [...this.scene.children]) {
+        if (child !== this.camera) this.scene.remove(child);
+      }
+      this.camera.clear();
+      this.els.loading.classList.add('hidden');
+      this.setMode('title');
+      this.menus.show('title');
+    }
+  }
+
+  private async buildSession(meta: WorldMeta): Promise<void> {
     const save = loadWorldSave(meta.id) ?? { v: 2 as const, seed: meta.seed, time: 0.3, edits: {} };
     const rules: GameRules = { ...DEFAULT_RULES, ...save.rules };
     const gamemode: GameMode = save.gamemode ?? meta.gamemode ?? 'survival';
@@ -303,10 +323,6 @@ export class Game {
     }
 
     entities.load(save.entities);
-
-    this.els.loading.classList.add('hidden');
-    this.saveTimer = 0;
-    this.setMode('paused');
   }
 
   private disposeSession(): void {
