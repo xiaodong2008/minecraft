@@ -75,6 +75,19 @@ export const B = {
   LapisOre: 69,
   LapisBlock: 70,
   RedstoneOre: 71,
+  RedstoneWire: 72,
+  RedstoneWireOn: 73,
+  RedstoneTorch: 74,
+  RedstoneTorchOff: 75,
+  Lever: 76,
+  LeverOn: 77,
+  StoneButton: 78,
+  StoneButtonPressed: 79,
+  PressurePlate: 80,
+  PressurePlatePressed: 81,
+  RedstoneLamp: 82,
+  RedstoneLampOn: 83,
+  RedstoneBlock: 84,
 } as const;
 
 export type BlockId = number;
@@ -375,6 +388,60 @@ BLOCKS[B.RedstoneOre] = def({
 });
 BLOCKS[B.LapisBlock] = def({
   name: 'Lapis Lazuli Block', tiles: all(TILE.LAPIS_BLOCK), hardness: 3, tool: 'pickaxe', harvestLevel: 1,
+});
+
+// ---- redstone components ----
+// Powered/pressed states are separate block ids swapped by the redstone engine
+// (the Furnace/FurnaceLit trick). Wire signal strength 0..15 lives in META.
+BLOCKS[B.RedstoneWire] = def({
+  name: 'Redstone Dust', tiles: all(TILE.REDSTONE_WIRE_OFF), opacity: 0, solid: false,
+  hardness: 0, needsSupport: true, height: 0.0625, drops: one(I.Redstone),
+});
+BLOCKS[B.RedstoneWireOn] = def({
+  name: 'Redstone Dust', tiles: all(TILE.REDSTONE_WIRE_ON), opacity: 0, emission: 7, solid: false,
+  hardness: 0, needsSupport: true, height: 0.0625, drops: one(I.Redstone),
+});
+BLOCKS[B.RedstoneTorch] = def({
+  name: 'Redstone Torch', tiles: all(TILE.REDSTONE_TORCH_ON), render: RENDER_CROSS, opacity: 0,
+  emission: 7, solid: false, hardness: 0, needsSupport: true, sound: 'wood',
+});
+BLOCKS[B.RedstoneTorchOff] = def({
+  name: 'Redstone Torch', tiles: all(TILE.REDSTONE_TORCH_OFF), render: RENDER_CROSS, opacity: 0,
+  solid: false, hardness: 0, needsSupport: true, sound: 'wood', drops: one(B.RedstoneTorch),
+});
+BLOCKS[B.Lever] = def({
+  name: 'Lever', tiles: all(TILE.LEVER_OFF), render: RENDER_CROSS, opacity: 0,
+  solid: false, hardness: 0.5, needsSupport: true,
+});
+BLOCKS[B.LeverOn] = def({
+  name: 'Lever', tiles: all(TILE.LEVER_ON), render: RENDER_CROSS, opacity: 0,
+  solid: false, hardness: 0.5, needsSupport: true, drops: one(B.Lever),
+});
+BLOCKS[B.StoneButton] = def({
+  name: 'Stone Button', tiles: all(TILE.STONE_BUTTON), render: RENDER_CROSS, opacity: 0,
+  solid: false, hardness: 0.5, needsSupport: true,
+});
+BLOCKS[B.StoneButtonPressed] = def({
+  name: 'Stone Button', tiles: all(TILE.STONE_BUTTON), render: RENDER_CROSS, opacity: 0,
+  solid: false, hardness: 0.5, needsSupport: true, drops: one(B.StoneButton),
+});
+BLOCKS[B.PressurePlate] = def({
+  name: 'Stone Pressure Plate', tiles: all(TILE.PRESSURE_PLATE), opacity: 0, solid: false,
+  hardness: 0.5, needsSupport: true, height: 0.0625,
+});
+BLOCKS[B.PressurePlatePressed] = def({
+  name: 'Stone Pressure Plate', tiles: all(TILE.PRESSURE_PLATE), opacity: 0, solid: false,
+  hardness: 0.5, needsSupport: true, height: 0.03125, drops: one(B.PressurePlate),
+});
+BLOCKS[B.RedstoneLamp] = def({
+  name: 'Redstone Lamp', tiles: all(TILE.REDSTONE_LAMP_OFF), hardness: 0.3, sound: 'glass',
+});
+BLOCKS[B.RedstoneLampOn] = def({
+  name: 'Redstone Lamp', tiles: all(TILE.REDSTONE_LAMP_ON), emission: 15, hardness: 0.3, sound: 'glass',
+  drops: one(B.RedstoneLamp),
+});
+BLOCKS[B.RedstoneBlock] = def({
+  name: 'Block of Redstone', tiles: all(TILE.REDSTONE_BLOCK), hardness: 5, tool: 'pickaxe', harvestLevel: 0,
 });
 
 // Default drops reference the block's own id.

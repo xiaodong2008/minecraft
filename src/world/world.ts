@@ -70,6 +70,29 @@ export function posKey(x: number, y: number, z: number): string {
   return `${x},${y},${z}`;
 }
 
+// ---------------- redstone id classification (pure helpers) ----------------
+
+const RS_DIRS = [
+  [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0],
+] as const;
+
+const RS_HORIZ = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+
+function isWireId(id: number): boolean {
+  return id === B.RedstoneWire || id === B.RedstoneWireOn;
+}
+
+/** Signal a block id injects into adjacent wires/consumers (sources emit 15). */
+function rsSourcePower(id: number): number {
+  return id === B.RedstoneTorch || id === B.LeverOn || id === B.StoneButtonPressed ||
+    id === B.PressurePlatePressed || id === B.RedstoneBlock ? 15 : 0;
+}
+
+/** Any block the redstone simulation reacts to (components + ignitable TNT). */
+function isRedstoneId(id: number): boolean {
+  return (id >= B.RedstoneWire && id <= B.RedstoneBlock) || id === B.TNT;
+}
+
 export class World implements LightWorldAccess {
   readonly seed: number;
   readonly terrain: Terrain;
@@ -212,6 +235,12 @@ export class World implements LightWorldAccess {
       }
     }
 
+    // Redstone: queue the change for the next simulation tick (unless the
+    // engine itself is applying its batched swaps).
+    if (!this.rsApplying && old !== id) {
+      this.rsOnBlockChanged(wx, wy, wz, old, id);
+    }
+
     this.lighting.onBlockChanged(wx, wy, wz, old, id);
 
     c.dirty = true;
@@ -260,15 +289,303 @@ export class World implements LightWorldAccess {
     return this.terrain.biomeAt(wx, wz);
   }
 
+  // ---------------- redstone engine ----------------
+  //
+  // Event-driven: setBlockAt enqueues changed cells near redstone components
+  // into rsDirty; tickRedstone drains the queue, recomputes the affected wire
+  // networks (bounded BFS — signal caps at 15 steps) and applies id swaps
+  // (wire on/off + META signal level, lamps, torches, TNT ignition) in one
+  // guarded batch so the swaps don't re-enqueue themselves.
+
+  /** Cells whose redstone state must be re-evaluated ("x,y,z"). */
+  private rsDirty = new Set<string>();
+  /** Guard: batched engine swaps must not re-dirty the network. */
+  private rsApplying = false;
+  /** Pressed stone buttons -> seconds until auto-release. */
+  private rsButtons = new Map<string, number>();
+  /** Torches scheduled to flip -> remaining delay in seconds. */
+  private rsTorches = new Map<string, number>();
+  /** Plate cells currently held down by the player. */
+  private rsPlates = new Set<string>();
+
+  /** setBlockAt hook: queue cells whose change can affect a redstone network. */
+  private rsOnBlockChanged(x: number, y: number, z: number, oldId: number, newId: number): void {
+    // Any swap to "pressed" starts the release countdown, no matter who did it.
+    if (newId === B.StoneButtonPressed) this.rsButtons.set(posKey(x, y, z), 1.0);
+
+    let relevant = isRedstoneId(oldId) || isRedstoneId(newId);
+    if (!relevant) {
+      // Plain blocks matter too when a component sits in the 3x3x3 around
+      // them (support removal, wire staircase cut by a solid block...).
+      outer:
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dz = -1; dz <= 1; dz++) {
+            if (isRedstoneId(this.getBlockAt(x + dx, y + dy, z + dz))) {
+              relevant = true;
+              break outer;
+            }
+          }
+        }
+      }
+    }
+    if (relevant) this.rsDirty.add(posKey(x, y, z));
+  }
+
   /**
-   * Per-frame redstone simulation (button timers, pressure plates, wire
-   * network updates). Implemented by the redstone engine.
+   * Per-frame redstone simulation: button/torch timers, player-on-plate
+   * detection, then wire network recomputation around all dirty cells.
    */
   tickRedstone(dt: number, px: number, py: number, pz: number): void {
-    void dt;
-    void px;
-    void py;
-    void pz;
+    this.rsTickButtons(dt);
+    this.rsTickTorches(dt);
+    this.rsTickPlates(px, py, pz);
+    if (this.rsDirty.size > 0) this.rsRecompute();
+  }
+
+  private rsTickButtons(dt: number): void {
+    for (const [key, left] of this.rsButtons) {
+      const remain = left - dt;
+      if (remain > 0) {
+        this.rsButtons.set(key, remain);
+        continue;
+      }
+      this.rsButtons.delete(key);
+      const [x, y, z] = key.split(',').map(Number);
+      if (this.getBlockAt(x, y, z) === B.StoneButtonPressed) {
+        this.setBlockAt(x, y, z, B.StoneButton, this.getMetaAt(x, y, z));
+      }
+    }
+  }
+
+  private rsTickTorches(dt: number): void {
+    for (const [key, left] of this.rsTorches) {
+      const remain = left - dt;
+      if (remain > 0) {
+        this.rsTorches.set(key, remain);
+        continue;
+      }
+      this.rsTorches.delete(key);
+      const [x, y, z] = key.split(',').map(Number);
+      const id = this.getBlockAt(x, y, z);
+      if (id !== B.RedstoneTorch && id !== B.RedstoneTorchOff) continue;
+      // Re-derive the state at flip time (the pulse may have passed already).
+      const want = this.rsSupportPowered(x, y - 1, z) ? B.RedstoneTorchOff : B.RedstoneTorch;
+      if (id !== want) this.setBlockAt(x, y, z, want, this.getMetaAt(x, y, z));
+    }
+  }
+
+  /** Press plates under the player's feet, release the ones stepped off. */
+  private rsTickPlates(px: number, py: number, pz: number): void {
+    // A plate cell is held down when the player AABB (0.6 wide) overlaps it
+    // horizontally and the feet sit within 0.3 above the cell floor.
+    const pressed = new Set<string>();
+    const yLo = Math.ceil(py - 0.3);
+    const yHi = Math.floor(py + 0.05);
+    for (let x = Math.floor(px - 0.3); x <= Math.floor(px + 0.3); x++) {
+      for (let z = Math.floor(pz - 0.3); z <= Math.floor(pz + 0.3); z++) {
+        for (let y = yLo; y <= yHi; y++) {
+          const id = this.getBlockAt(x, y, z);
+          if (id === B.PressurePlate || id === B.PressurePlatePressed) {
+            pressed.add(posKey(x, y, z));
+          }
+        }
+      }
+    }
+    for (const key of pressed) {
+      const [x, y, z] = key.split(',').map(Number);
+      if (this.getBlockAt(x, y, z) === B.PressurePlate) {
+        this.setBlockAt(x, y, z, B.PressurePlatePressed, this.getMetaAt(x, y, z));
+      }
+    }
+    for (const key of this.rsPlates) {
+      if (pressed.has(key)) continue;
+      const [x, y, z] = key.split(',').map(Number);
+      if (this.getBlockAt(x, y, z) === B.PressurePlatePressed) {
+        this.setBlockAt(x, y, z, B.PressurePlate, this.getMetaAt(x, y, z));
+      }
+    }
+    this.rsPlates = pressed;
+  }
+
+  /** Wire cells connected to the wire at (x,y,z): same level + staircases. */
+  private rsWireNeighbors(x: number, y: number, z: number): [number, number, number][] {
+    const out: [number, number, number][] = [];
+    for (const [dx, dz] of RS_HORIZ) {
+      if (isWireId(this.getBlockAt(x + dx, y, z + dz))) {
+        out.push([x + dx, y, z + dz]);
+      }
+      // Step up: blocked when a solid block caps this (the lower) wire.
+      if (isWireId(this.getBlockAt(x + dx, y + 1, z + dz)) && !isSolid(this.getBlockAt(x, y + 1, z))) {
+        out.push([x + dx, y + 1, z + dz]);
+      }
+      // Step down: blocked when a solid block caps the lower wire over there.
+      if (isWireId(this.getBlockAt(x + dx, y - 1, z + dz)) && !isSolid(this.getBlockAt(x + dx, y, z + dz))) {
+        out.push([x + dx, y - 1, z + dz]);
+      }
+    }
+    return out;
+  }
+
+  /** Strongest signal entering a consumer cell (sources 15, wires their level). */
+  private rsPowerInto(x: number, y: number, z: number): number {
+    let p = 0;
+    for (const [dx, dy, dz] of RS_DIRS) {
+      const nid = this.getBlockAt(x + dx, y + dy, z + dz);
+      if (isWireId(nid)) p = Math.max(p, this.getMetaAt(x + dx, y + dy, z + dz));
+      else p = Math.max(p, rsSourcePower(nid));
+    }
+    return p;
+  }
+
+  /**
+   * Is the torch support cell at (x,y,z) powered? True flips the torch above
+   * it off (the classic inverter). Powered by: being a redstone block, any
+   * adjacent powered wire or non-torch source, or a lit torch directly below
+   * (torches strongly power upward — and never their own support).
+   */
+  private rsSupportPowered(x: number, y: number, z: number): boolean {
+    if (this.getBlockAt(x, y, z) === B.RedstoneBlock) return true;
+    for (const [dx, dy, dz] of RS_DIRS) {
+      const nid = this.getBlockAt(x + dx, y + dy, z + dz);
+      if (isWireId(nid) && this.getMetaAt(x + dx, y + dy, z + dz) > 0) return true;
+      if (nid === B.RedstoneTorch) {
+        if (dy === -1) return true;
+        continue;
+      }
+      if (rsSourcePower(nid) > 0) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Recompute the wire networks around all dirty cells: bounded BFS collects
+   * the affected wires, signal relaxes outward from sources (15) losing 1 per
+   * step, then swaps + consumer reactions are applied in one batch.
+   */
+  private rsRecompute(): void {
+    const dirty = [...this.rsDirty];
+    this.rsDirty.clear();
+
+    // -- collect affected wires: seeds are wires in the 3x3x3 around each
+    //    dirty cell, expanded along wire connectivity. Signal moves at most
+    //    15 steps, so wires further than the depth cap cannot have changed.
+    interface RsCell { x: number; y: number; z: number; power: number }
+    const region = new Map<string, RsCell>();
+    const queue: { x: number; y: number; z: number; d: number }[] = [];
+    for (const key of dirty) {
+      const [x, y, z] = key.split(',').map(Number);
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dz = -1; dz <= 1; dz++) {
+            const wx = x + dx, wy = y + dy, wz = z + dz;
+            const k = posKey(wx, wy, wz);
+            if (!region.has(k) && isWireId(this.getBlockAt(wx, wy, wz))) {
+              region.set(k, { x: wx, y: wy, z: wz, power: 0 });
+              queue.push({ x: wx, y: wy, z: wz, d: 0 });
+            }
+          }
+        }
+      }
+    }
+    for (let qi = 0; qi < queue.length; qi++) {
+      const { x, y, z, d } = queue[qi];
+      if (d >= 17) continue;
+      for (const [nx, ny, nz] of this.rsWireNeighbors(x, y, z)) {
+        const k = posKey(nx, ny, nz);
+        if (!region.has(k)) {
+          region.set(k, { x: nx, y: ny, z: nz, power: 0 });
+          queue.push({ x: nx, y: ny, z: nz, d: d + 1 });
+        }
+      }
+    }
+
+    // -- seed signal: adjacent sources give 15; wires just outside the region
+    //    kept their old level and feed the boundary at level - 1.
+    const buckets: RsCell[][] = Array.from({ length: 16 }, () => []);
+    for (const cell of region.values()) {
+      let p = 0;
+      for (const [dx, dy, dz] of RS_DIRS) {
+        p = Math.max(p, rsSourcePower(this.getBlockAt(cell.x + dx, cell.y + dy, cell.z + dz)));
+      }
+      if (p < 15) {
+        for (const [nx, ny, nz] of this.rsWireNeighbors(cell.x, cell.y, cell.z)) {
+          if (!region.has(posKey(nx, ny, nz))) {
+            p = Math.max(p, this.getMetaAt(nx, ny, nz) - 1);
+          }
+        }
+      }
+      cell.power = p;
+      if (p > 0) buckets[p].push(cell);
+    }
+
+    // -- relax outward, 15 -> 1 (uniform -1 edges: bucket order is optimal) --
+    for (let p = 15; p >= 2; p--) {
+      for (const cell of buckets[p]) {
+        if (cell.power !== p) continue; // superseded by a stronger path
+        for (const [nx, ny, nz] of this.rsWireNeighbors(cell.x, cell.y, cell.z)) {
+          const n = region.get(posKey(nx, ny, nz));
+          if (n && n.power < p - 1) {
+            n.power = p - 1;
+            buckets[p - 1].push(n);
+          }
+        }
+      }
+    }
+
+    // -- apply: wire id/meta swaps first, then consumers see fresh levels --
+    this.rsApplying = true;
+    const ignitions: { x: number; y: number; z: number }[] = [];
+    for (const cell of region.values()) {
+      const id = this.getBlockAt(cell.x, cell.y, cell.z);
+      const want = cell.power > 0 ? B.RedstoneWireOn : B.RedstoneWire;
+      if (id !== want || this.getMetaAt(cell.x, cell.y, cell.z) !== cell.power) {
+        this.setBlockAt(cell.x, cell.y, cell.z, want, cell.power);
+      }
+    }
+
+    // Consumers anywhere in the 3x3x3 around a changed cell: lamps toggle,
+    // TNT ignites, torches schedule an inverter flip.
+    const evaluate = new Set<string>();
+    const addAround = (x: number, y: number, z: number): void => {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dz = -1; dz <= 1; dz++) {
+            evaluate.add(posKey(x + dx, y + dy, z + dz));
+          }
+        }
+      }
+    };
+    for (const key of dirty) {
+      const [x, y, z] = key.split(',').map(Number);
+      addAround(x, y, z);
+    }
+    for (const cell of region.values()) addAround(cell.x, cell.y, cell.z);
+
+    for (const key of evaluate) {
+      const [x, y, z] = key.split(',').map(Number);
+      const id = this.getBlockAt(x, y, z);
+      if (id === B.RedstoneLamp || id === B.RedstoneLampOn) {
+        const want = this.rsPowerInto(x, y, z) > 0 ? B.RedstoneLampOn : B.RedstoneLamp;
+        if (id !== want) this.setBlockAt(x, y, z, want, this.getMetaAt(x, y, z));
+      } else if (id === B.TNT) {
+        if (this.rsPowerInto(x, y, z) > 0) ignitions.push({ x, y, z });
+      } else if (id === B.RedstoneTorch || id === B.RedstoneTorchOff) {
+        const want = this.rsSupportPowered(x, y - 1, z) ? B.RedstoneTorchOff : B.RedstoneTorch;
+        if (id !== want && !this.rsTorches.has(key)) this.rsTorches.set(key, 0.1);
+      } else if (id === B.StoneButtonPressed && !this.rsButtons.has(key)) {
+        // Reload safety: a pressed button always gets a release countdown.
+        this.rsButtons.set(key, 1.0);
+      } else if (id === B.PressurePlatePressed) {
+        // Reload safety: adopt unknown pressed plates so they can release.
+        this.rsPlates.add(key);
+      }
+    }
+    this.rsApplying = false;
+
+    // TNT hand-off runs outside the guard: the game swaps the block to air,
+    // which re-dirties neighbors through the normal hook.
+    for (const { x, y, z } of ignitions) this.onTntIgnited?.(x, y, z);
   }
 
   /** Nearest dry, tree-free column (spiral search within generated chunks). */

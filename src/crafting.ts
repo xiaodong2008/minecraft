@@ -85,6 +85,15 @@ shaped(['CC', 'CC'], { C: I.ClayBall }, B.Clay);
 shaped(['LLL', 'LLL', 'LLL'], { L: I.LapisLazuli }, B.LapisBlock);
 shapeless([B.LapisBlock], I.LapisLazuli, 9);
 
+// ---- redstone ----
+shaped(['R', 'S'], { R: I.Redstone, S: I.Stick }, B.RedstoneTorch);
+shaped(['S', 'C'], { S: I.Stick, C: B.Cobblestone }, B.Lever);
+shapeless([B.Stone], B.StoneButton);
+shaped(['SS'], { S: B.Stone }, B.PressurePlate);
+shaped([' R ', 'RGR', ' R '], { R: I.Redstone, G: B.Glowstone }, B.RedstoneLamp);
+shaped(['RRR', 'RRR', 'RRR'], { R: I.Redstone }, B.RedstoneBlock);
+shapeless([B.RedstoneBlock], I.Redstone, 9);
+
 // ---- wool dyeing ----
 shapeless([I.LapisLazuli, B.WoolWhite], B.WoolBlue);
 shapeless([B.Poppy, B.WoolWhite], B.WoolRed);

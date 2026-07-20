@@ -223,6 +223,10 @@ const HIDDEN_BLOCKS = new Set<number>([
   B.Wheat0 + 4, B.Wheat0 + 5, B.Wheat0 + 6, B.Wheat0 + 7,
   B.Carrots0, B.Carrots0 + 1, B.Carrots0 + 2, B.Carrots0 + 3,
   B.Potatoes0, B.Potatoes0 + 1, B.Potatoes0 + 2, B.Potatoes0 + 3,
+  // Redstone technical states: wire is placed via the dust item, the rest are
+  // powered/pressed variants of the base block.
+  B.RedstoneWire, B.RedstoneWireOn, B.RedstoneTorchOff, B.LeverOn,
+  B.StoneButtonPressed, B.PressurePlatePressed, B.RedstoneLampOn,
 ]);
 
 /**

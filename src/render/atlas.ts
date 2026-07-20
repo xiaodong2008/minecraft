@@ -195,6 +195,87 @@ function pumpkinFace(lit: boolean): Painter {
   };
 }
 
+// ---- redstone component art ----
+
+function redstoneWire(on: boolean): Painter {
+  const main: readonly [number, number, number] = on ? [255, 48, 32] : [107, 6, 3];
+  const dark: readonly [number, number, number] = on ? [196, 26, 14] : [72, 4, 2];
+  return (px, rand) => {
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) px(x, y, [0, 0, 0, 0]);
+    // Cross of dust lines with a chunky knot in the middle.
+    for (let i = 0; i < S; i++) {
+      px(i, 7, vary(rand, main, 0.12));
+      px(i, 8, vary(rand, dark, 0.12));
+      px(7, i, vary(rand, main, 0.12));
+      px(8, i, vary(rand, dark, 0.12));
+    }
+    for (let y = 6; y <= 9; y++) for (let x = 6; x <= 9; x++) px(x, y, vary(rand, main, 0.14));
+    if (on) {
+      // Glow sparks scattered along the lit lines.
+      for (let k = 0; k < 10; k++) {
+        const along = Math.floor(rand() * S);
+        if (rand() < 0.5) px(along, rand() < 0.5 ? 7 : 8, [255, 140, 90, 255]);
+        else px(rand() < 0.5 ? 7 : 8, along, [255, 140, 90, 255]);
+      }
+      px(7, 7, [255, 196, 140, 255]);
+      px(8, 8, [255, 170, 110, 255]);
+    }
+  };
+}
+
+function redstoneTorch(lit: boolean): Painter {
+  return (px, rand) => {
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) px(x, y, [0, 0, 0, 0]);
+    for (let y = 6; y < S; y++) for (let x = 7; x <= 8; x++) {
+      px(x, y, vary(rand, x === 7 ? [168, 128, 74] : [128, 96, 55], 0.06));
+    }
+    if (lit) {
+      px(7, 5, [255, 130, 100, 255]); px(8, 5, [255, 130, 100, 255]);
+      px(7, 4, [255, 62, 40, 255]); px(8, 4, [255, 62, 40, 255]);
+      px(7, 3, [208, 32, 20, 255]); px(8, 3, [208, 32, 20, 255]);
+      px(6, 4, [255, 96, 66, 255]); px(9, 4, [255, 96, 66, 255]);
+    } else {
+      px(7, 5, [96, 24, 18, 255]); px(8, 5, [96, 24, 18, 255]);
+      px(7, 4, [74, 18, 14, 255]); px(8, 4, [74, 18, 14, 255]);
+      px(7, 3, [58, 14, 10, 255]); px(8, 3, [58, 14, 10, 255]);
+    }
+  };
+}
+
+function leverTile(on: boolean): Painter {
+  return (px, rand) => {
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) px(x, y, [0, 0, 0, 0]);
+    // Cobblestone base plate.
+    for (let y = 12; y < S; y++) for (let x = 4; x <= 11; x++) {
+      const border = y === 12 || x === 4 || x === 11;
+      px(x, y, vary(rand, border ? [88, 88, 88] : [127, 127, 127], 0.1));
+    }
+    // Stick leans left when off, right when on; red knob on the tip.
+    for (let k = 0; k < 7; k++) {
+      const y = 11 - k;
+      const x = on ? 8 + (k >> 1) : 7 - (k >> 1);
+      px(x, y, vary(rand, [130, 100, 58], 0.08));
+    }
+    const tipX = on ? 11 : 4;
+    px(tipX, 5, [204, 40, 30, 255]);
+    px(tipX, 4, [232, 62, 44, 255]);
+  };
+}
+
+function redstoneLamp(on: boolean): Painter {
+  const cell: readonly [number, number, number] = on ? [255, 202, 112] : [150, 100, 58];
+  const cellDim: readonly [number, number, number] = on ? [242, 162, 72] : [112, 74, 46];
+  const frame: readonly [number, number, number] = on ? [124, 44, 30] : [78, 30, 24];
+  return (px, rand) => {
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const border = x === 0 || y === 0 || x === S - 1 || y === S - 1;
+      const lattice = x % 5 === 0 || y % 5 === 0;
+      if (border || lattice) px(x, y, vary(rand, frame, 0.08));
+      else px(x, y, hash2(x >> 1, y >> 1, 31) > 0.5 ? vary(rand, cell, 0.06) : vary(rand, cellDim, 0.08));
+    }
+  };
+}
+
 function bedTop(): Painter {
   return (px, rand) => {
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
@@ -224,6 +305,40 @@ function bedSide(): Painter {
 const PAINTERS: Record<number, Painter> = {
   [TILE.BED_TOP]: bedTop(),
   [TILE.BED_SIDE]: bedSide(),
+  [TILE.REDSTONE_WIRE_OFF]: redstoneWire(false),
+  [TILE.REDSTONE_WIRE_ON]: redstoneWire(true),
+  [TILE.REDSTONE_TORCH_ON]: redstoneTorch(true),
+  [TILE.REDSTONE_TORCH_OFF]: redstoneTorch(false),
+  [TILE.LEVER_OFF]: leverTile(false),
+  [TILE.LEVER_ON]: leverTile(true),
+  [TILE.STONE_BUTTON]: (px, rand) => {
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) px(x, y, [0, 0, 0, 0]);
+    // Small floor-mounted stone stub.
+    for (let y = 10; y < S; y++) for (let x = 5; x <= 10; x++) {
+      const border = y === 10 || x === 5 || x === 10;
+      px(x, y, vary(rand, border ? [96, 96, 96] : [138, 138, 138], 0.06));
+    }
+  },
+  [TILE.PRESSURE_PLATE]: (px, rand) => {
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const rim = x === 0 || y === 0 || x === S - 1 || y === S - 1;
+      const inner = !rim && (x === 1 || y === 1 || x === S - 2 || y === S - 2);
+      const c = vary(rand, [148, 148, 148], 0.05);
+      const f = rim ? 0.62 : inner ? 0.82 : 1;
+      px(x, y, [c[0] * f, c[1] * f, c[2] * f, 255]);
+    }
+  },
+  [TILE.REDSTONE_LAMP_OFF]: redstoneLamp(false),
+  [TILE.REDSTONE_LAMP_ON]: redstoneLamp(true),
+  [TILE.REDSTONE_BLOCK]: (px, rand) => {
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const border = x === 0 || y === 0 || x === S - 1 || y === S - 1;
+      const fleck = rand();
+      const c: readonly [number, number, number] =
+        border ? [120, 14, 10] : fleck < 0.1 ? [255, 92, 70] : fleck < 0.2 ? [140, 16, 12] : [188, 26, 18];
+      px(x, y, vary(rand, c, 0.06));
+    }
+  },
   [TILE.SUGAR_CANE]: (px, rand) => {
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) px(x, y, [0, 0, 0, 0]);
     for (const cx of [3, 7, 11]) {

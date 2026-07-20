@@ -366,6 +366,22 @@ export class Interaction {
         if (!this.player.creative && this.inventory.damageHeld(1)) this.sound.toolBreak();
         return;
       }
+      if (id === B.Lever || id === B.LeverOn) {
+        const t = this.target;
+        this.world.setBlockAt(t.x, t.y, t.z, id === B.Lever ? B.LeverOn : B.Lever, this.world.getMetaAt(t.x, t.y, t.z));
+        this.sound.click();
+        this.events.onSwing();
+        return;
+      }
+      if (id === B.StoneButton || id === B.StoneButtonPressed) {
+        if (id === B.StoneButton) {
+          const t = this.target;
+          this.world.setBlockAt(t.x, t.y, t.z, B.StoneButtonPressed, this.world.getMetaAt(t.x, t.y, t.z));
+          this.sound.click();
+          this.events.onSwing();
+        }
+        return;
+      }
       if (id === B.Bed) {
         this.events.onUseBed(this.target.x, this.target.y, this.target.z);
         return;
@@ -388,6 +404,18 @@ export class Interaction {
         this.world.setBlockAt(t.x, t.y + 1, t.z, heldDef.plantsCrop);
         if (!this.player.creative) this.inventory.take(this.inventory.selected, 1);
         this.sound.place('grass');
+        this.events.onSwing();
+      }
+      return;
+    }
+
+    // 2b) Redstone dust: lay wire on top of the targeted solid block
+    if (clicked && this.target && held.id === I.Redstone) {
+      const t = this.target;
+      if (isSolid(t.id) && blockDef(this.world.getBlockAt(t.x, t.y + 1, t.z)).replaceable) {
+        this.world.setBlockAt(t.x, t.y + 1, t.z, B.RedstoneWire, 0);
+        if (!this.player.creative) this.inventory.take(this.inventory.selected, 1);
+        this.sound.place('stone');
         this.events.onSwing();
       }
       return;
@@ -562,6 +590,16 @@ export class Interaction {
     const below = this.world.getBlockAt(x, y - 1, z);
     switch (id) {
       case B.Torch:
+      case B.RedstoneWire:
+      case B.RedstoneWireOn:
+      case B.RedstoneTorch:
+      case B.RedstoneTorchOff:
+      case B.Lever:
+      case B.LeverOn:
+      case B.StoneButton:
+      case B.StoneButtonPressed:
+      case B.PressurePlate:
+      case B.PressurePlatePressed:
         return isSolid(below);
       case B.TallGrass:
       case B.Dandelion:
