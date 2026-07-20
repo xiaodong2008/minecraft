@@ -342,6 +342,7 @@ const PAINTERS: Record<number, Painter> = {
   [TILE.GOLD_ORE]: oreTile([252, 216, 80]),
   [TILE.DIAMOND_ORE]: oreTile([98, 230, 222]),
   [TILE.LAPIS_ORE]: oreTile([48, 96, 208]),
+  [TILE.REDSTONE_ORE]: oreTile([226, 40, 28]),
   [TILE.LAPIS_BLOCK]: (px, rand) => {
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
       const fleck = rand();

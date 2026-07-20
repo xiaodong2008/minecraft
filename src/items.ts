@@ -131,6 +131,7 @@ item(I.ClayBall, 'Clay Ball');
 item(I.BrickItem, 'Brick');
 item(I.LapisLazuli, 'Lapis Lazuli');
 item(I.GreenDye, 'Green Dye');
+item(I.Redstone, 'Redstone Dust');
 
 for (let tier = 0; tier < TOOL_TIERS.length; tier++) {
   for (let kind = 0; kind < TOOL_KINDS.length; kind++) {

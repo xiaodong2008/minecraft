@@ -74,6 +74,7 @@ export const B = {
   Clay: 68,
   LapisOre: 69,
   LapisBlock: 70,
+  RedstoneOre: 71,
 } as const;
 
 export type BlockId = number;
@@ -366,6 +367,11 @@ BLOCKS[B.LapisOre] = def({
   name: 'Lapis Lazuli Ore', tiles: all(TILE.LAPIS_ORE), hardness: 3, tool: 'pickaxe', harvestLevel: 1,
   drops: (rand) => [{ id: I.LapisLazuli, count: 4 + Math.floor(rand() * 5) }],
   xp: (r) => 2 + Math.floor(r() * 4),
+});
+BLOCKS[B.RedstoneOre] = def({
+  name: 'Redstone Ore', tiles: all(TILE.REDSTONE_ORE), hardness: 3, tool: 'pickaxe', harvestLevel: 2,
+  drops: (rand) => [{ id: I.Redstone, count: 4 + Math.floor(rand() * 2) }],
+  xp: (r) => 1 + Math.floor(r() * 4),
 });
 BLOCKS[B.LapisBlock] = def({
   name: 'Lapis Lazuli Block', tiles: all(TILE.LAPIS_BLOCK), hardness: 3, tool: 'pickaxe', harvestLevel: 1,

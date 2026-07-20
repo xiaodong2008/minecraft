@@ -6,7 +6,7 @@ import type { Player } from './player/player';
 import type { Inventory } from './inventory';
 import type { Sky } from './render/sky';
 import type { EntityManager } from './entities/manager';
-import type { GameMode, GameRules } from './saves';
+import type { GameMode, GameRules, WeatherKind } from './saves';
 import type { MobType } from './render/mobmodels';
 import { allItemIds, itemDef } from './items';
 import { blockDef, isBlockId } from './blocks';
@@ -22,6 +22,10 @@ export interface CommandCtx {
   gamemode(): GameMode;
   setGamemode(m: GameMode): void;
   setRule(key: keyof GameRules, value: boolean): void;
+  /** Current weather state. */
+  weather(): WeatherKind;
+  /** Force weather; durationS 0 = roll a default duration. */
+  setWeather(kind: WeatherKind, durationS?: number): void;
   /** Print a line into the chat log. */
   print(msg: string): void;
   /** Small HUD toast above the hotbar. */

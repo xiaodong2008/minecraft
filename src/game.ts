@@ -5,6 +5,7 @@ import { buildAtlas, buildDirtBackgroundURL, Atlas } from './render/atlas';
 import { createTerrainMaterials, TerrainMaterials } from './render/materials';
 import { Sky } from './render/sky';
 import { Particles } from './render/particles';
+import { Weather } from './render/weather';
 import { HeldItemView } from './render/helditem';
 import { World } from './world/world';
 import { Player } from './player/player';
@@ -38,6 +39,7 @@ interface Session {
   hud: Hud;
   screens: Screens;
   sky: Sky;
+  weather: Weather;
   rules: GameRules;
 }
 
@@ -98,6 +100,7 @@ export class Game {
     this.icons = new IconRenderer(this.atlas.canvas);
     this.input = new Input(canvas);
     this.sound.setVolume(this.options.volume);
+    this.sound.setMusicVolume(this.options.musicVolume);
 
     document.documentElement.style.setProperty('--dirt-url', `url(${buildDirtBackgroundURL()})`);
 
@@ -192,6 +195,9 @@ export class Game {
     const sky = new Sky(this.scene);
     sky.time = save.time;
 
+    const weather = new Weather(this.scene);
+    weather.load(save.weather);
+
     const player = new Player(world);
     player.creative = gamemode === 'creative';
     const inventory = new Inventory();
@@ -240,7 +246,7 @@ export class Game {
     const heldItem = new HeldItemView(this.camera, this.atlas.texture);
 
     this.session = {
-      meta, world, player, inventory, entities, particles, interaction, heldItem, hud, screens, sky, rules,
+      meta, world, player, inventory, entities, particles, interaction, heldItem, hud, screens, sky, weather, rules,
     };
     this.applyRules();
     this.applySessionOptions();
@@ -256,6 +262,10 @@ export class Game {
     world.onGravityBlock = (x, y, z, id) => {
       world.setBlockAt(x, y, z, B.Air);
       entities.spawnFallingBlock(x, y, z, id);
+    };
+    world.onTntIgnited = (x, y, z) => {
+      world.setBlockAt(x, y, z, B.Air);
+      entities.primeTnt(x, y, z);
     };
     world.onSupportBroken = (x, y, z, id) => {
       entities.dropBlockItems(blockDef(id).drops(Math.random), x, y, z);
@@ -302,6 +312,8 @@ export class Game {
   private disposeSession(): void {
     if (!this.session) return;
     this.session.entities.clearAll();
+    this.session.weather.dispose();
+    this.sound.setRainLevel(0);
     this.session.screens.close();
     this.session.screens.dispose();
     // Remove every scene child except the camera (chunk meshes, sky, particles, highlights).
@@ -465,6 +477,11 @@ export class Game {
         this.applyRules();
         this.save();
       },
+      weather: () => s.weather.kind,
+      setWeather: (kind, durationS = 0) => {
+        s.weather.set(kind, durationS);
+        this.save();
+      },
       print: (msg) => this.chat.print(msg),
       toast: (msg) => s.hud.toast(msg),
       save: () => this.save(),
@@ -604,6 +621,7 @@ export class Game {
       entities: s.entities.serialize(),
       gamemode: s.player.creative ? 'creative' : 'survival',
       rules: s.rules,
+      weather: s.weather.serialize(),
     };
     if (saveWorldSave(s.meta.id, data)) {
       s.world.editsDirty = false;
@@ -614,6 +632,7 @@ export class Game {
     this.options = o;
     saveOptions(o);
     this.sound.setVolume(o.volume);
+    this.sound.setMusicVolume(o.musicVolume);
     this.session?.world.setRenderDistance(o.renderDistance);
     this.applySessionOptions();
     if (Math.abs(this.camera.fov - o.fov) > 0.5 && !this.session?.player.sprinting) {
@@ -632,6 +651,11 @@ export class Game {
     this.fps = this.fps * 0.95 + (1 / Math.max(dt, 1e-4)) * 0.05;
 
     const s = this.session;
+    this.sound.tickMusic(
+      dt,
+      !s ? 'menu' : s.player.creative ? 'creative' : s.sky.sunFactor() > 0.5 ? 'day' : 'night',
+    );
+
     if (!s) {
       if (this.mode === 'title') this.renderPanorama(dt);
       else this.renderer.clear();
@@ -650,10 +674,15 @@ export class Game {
     if (running && simDt > 0) {
       const sun = s.sky.sunFactor();
       s.world.tickFurnaces(simDt);
+      s.world.tickRedstone(simDt, s.player.pos.x, s.player.pos.y, s.player.pos.z);
       s.world.randomTicks(simDt, s.player.pos.x, s.player.pos.z, sun);
       s.entities.update(simDt, sun);
       s.particles.update(simDt, s.world);
       s.player.armorPoints = s.inventory.armorPoints();
+
+      const wf = s.weather.update(simDt, s.world, this.camera.position, s.sky);
+      this.sound.setRainLevel(wf.rain);
+      if (wf.thunder) this.sound.thunder();
     }
 
     if (this.mode === 'screen') {

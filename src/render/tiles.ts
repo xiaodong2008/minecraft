@@ -91,6 +91,7 @@ export const TILE = {
   LAPIS_ORE: 82,
   LAPIS_BLOCK: 83,
   STONE_SLAB: 84,
+  REDSTONE_ORE: 85,
 } as const;
 
 export type TileId = number;

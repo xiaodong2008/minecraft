@@ -87,6 +87,8 @@ export class World implements LightWorldAccess {
 
   /** Set by the game: called when a random tick or furnace wants a sound/particle hook. */
   onFurnaceFinish: (() => void) | null = null;
+  /** Redstone power reached a TNT block — the game turns it into a primed entity. */
+  onTntIgnited: ((x: number, y: number, z: number) => void) | null = null;
   /** Chunks freshly generated this session (for passive mob seeding). */
   freshChunks: Chunk[] = [];
 
@@ -251,6 +253,22 @@ export class World implements LightWorldAccess {
       if (this.isSolidAt(wx, y, wz)) return y;
     }
     return 0;
+  }
+
+  /** Biome at a column (pure terrain query, works for ungenerated chunks too). */
+  biomeAt(wx: number, wz: number): ReturnType<Terrain['biomeAt']> {
+    return this.terrain.biomeAt(wx, wz);
+  }
+
+  /**
+   * Per-frame redstone simulation (button timers, pressure plates, wire
+   * network updates). Implemented by the redstone engine.
+   */
+  tickRedstone(dt: number, px: number, py: number, pz: number): void {
+    void dt;
+    void px;
+    void py;
+    void pz;
   }
 
   /** Nearest dry, tree-free column (spiral search within generated chunks). */

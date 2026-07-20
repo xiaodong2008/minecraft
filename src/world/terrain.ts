@@ -2,6 +2,7 @@ import { CHUNK_SIZE, WORLD_HEIGHT, SEA_LEVEL } from '../constants';
 import { B } from '../blocks';
 import { Simplex2, Simplex3, hash2 } from '../utils/noise';
 import { Chunk, chunkIndex } from './chunk';
+import { Structures } from './structures';
 
 export type Biome = 'plains' | 'forest' | 'desert' | 'snow';
 
@@ -90,7 +91,11 @@ export class Terrain {
     this.oreNoiseA = new Simplex3(this.seed ^ 0x3333);
     this.oreNoiseB = new Simplex3(this.seed ^ 0x4444);
     this.oreNoiseC = new Simplex3(this.seed ^ 0x5555);
+    this.structures = new Structures(this.seed, this);
   }
+
+  /** Village/structure generator (see structures.ts). */
+  readonly structures: Structures;
 
   /** Low-frequency, domain-warped climate at a column. Pure and deterministic. */
   private climateAt(x: number, z: number): Climate {
@@ -249,6 +254,7 @@ export class Terrain {
 
     this.placePlants(chunk);
     this.placeTrees(chunk);
+    this.structures.generate(chunk);
     chunk.generated = true;
   }
 
@@ -287,6 +293,7 @@ export class Terrain {
         const wz = baseZ + lz;
         const h = this.heightAt(wx, wz);
         if (h + 1 >= WORLD_HEIGHT) continue;
+        if (this.structures.clearsColumn(wx, wz)) continue;
 
         // Sugar cane: on grass/sand exactly at sea level with adjacent water.
         if (h === SEA_LEVEL && hash2(wx, wz, this.seed ^ 0xca9e) < 0.12) {
@@ -340,6 +347,7 @@ export class Terrain {
         const wz = baseZ + tz;
         const tree = this.treeAt(wx, wz);
         if (!tree) continue;
+        if (this.structures.clearsColumn(wx, wz)) continue;
         const ground = this.heightAt(wx, wz);
 
         if (tree.kind === 'cactus') {

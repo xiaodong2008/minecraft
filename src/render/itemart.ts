@@ -727,6 +727,7 @@ const PAINTERS: Record<number, (ctx: CanvasRenderingContext2D) => void> = {
   [I.Sugar]: pile([244, 244, 248], [255, 255, 255]),
   [I.GreenDye]: pile([62, 134, 48], [104, 174, 82]),
   [I.LapisLazuli]: pile([46, 84, 190], [110, 142, 230]),
+  [I.Redstone]: pile([196, 22, 12], [255, 70, 48]),
   [I.Cookie]: art([
     '................',
     '................',

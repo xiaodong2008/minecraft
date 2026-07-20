@@ -2,6 +2,14 @@ import { WORLDS_INDEX_KEY, WORLD_KEY_PREFIX, OPTIONS_KEY, DEFAULT_RENDER_DISTANC
 
 export type GameMode = 'survival' | 'creative';
 
+export type WeatherKind = 'clear' | 'rain' | 'thunder';
+
+export interface WeatherSave {
+  kind: WeatherKind;
+  /** Seconds until the next automatic weather change. */
+  timer: number;
+}
+
 /** Per-world game rules, toggled with the /gamerule command. */
 export interface GameRules {
   keepInventory: boolean;
@@ -45,11 +53,14 @@ export interface WorldSave {
   entities?: { mobs?: unknown[]; items?: unknown[]; seeded?: string[] };
   gamemode?: GameMode;
   rules?: Partial<GameRules>;
+  weather?: WeatherSave;
 }
 
 export interface Options {
   renderDistance: number;
   volume: number;
+  /** Background music volume, independent of sound effects. */
+  musicVolume: number;
   sensitivity: number;
   fov: number;
   /** GUI scale multiplier (0 = auto). */
@@ -69,6 +80,7 @@ export interface Options {
 export const DEFAULT_OPTIONS: Options = {
   renderDistance: DEFAULT_RENDER_DISTANCE,
   volume: 0.5,
+  musicVolume: 0.35,
   sensitivity: 1,
   fov: 75,
   guiScale: 0,

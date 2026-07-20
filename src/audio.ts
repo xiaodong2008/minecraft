@@ -3,6 +3,9 @@ import type { MobType } from './render/mobmodels';
 
 // Procedural sound effects via WebAudio (filtered noise + oscillators) — no audio assets.
 
+/** Ambience context handed to the music engine each frame by the game. */
+export type MusicMood = 'menu' | 'day' | 'night' | 'creative';
+
 const KIND_FREQ: Record<SoundKind, number> = {
   stone: 480,
   dirt: 260,
@@ -192,6 +195,30 @@ export class Sound {
 
   smeltDone(): void {
     this.pop();
+  }
+
+  // ---- music + weather ambience (implemented by the music engine) ----
+
+  /** Music volume 0..1, independent of the SFX volume. */
+  setMusicVolume(v: number): void {
+    void v;
+  }
+
+  /** Called every frame; occasionally starts a generated ambient track. */
+  tickMusic(dt: number, mood: MusicMood): void {
+    void dt;
+    void mood;
+  }
+
+  /** Continuous rain loop intensity 0..1 (0 stops the loop). */
+  setRainLevel(v: number): void {
+    void v;
+  }
+
+  /** Distant thunder clap. */
+  thunder(): void {
+    this.burst(60, 2.2, 0.7, 0.4);
+    this.tone('sine', 55, 25, 1.8, 0.4);
   }
 
   // ---- mobs ----

@@ -50,6 +50,7 @@ export const I = {
   BrickItem: 325,
   LapisLazuli: 326,
   GreenDye: 327,
+  Redstone: 328,
 } as const;
 
 // Tools: 300 + tier*5 + kind
