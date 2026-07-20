@@ -1,5 +1,6 @@
 import { ItemStack, itemDef, canStack, fuelTime, SMELTING, allItemIds } from '../items';
-import { armorId } from '../ids';
+import { B, RENDER_CROSS, blockDef, isBlockId } from '../blocks';
+import { I, armorId, toolId } from '../ids';
 import { matchRecipe } from '../crafting';
 import { Inventory } from '../inventory';
 import { SMELT_TIME, FurnaceState, ChestState } from '../world/world';
@@ -20,6 +21,10 @@ interface SlotSpec {
   onResultTake?(): void;
   /** Faded silhouette shown while the slot is empty (armor slots). */
   ghostId?: number;
+  /** Creative "destroy item" slot: click deletes the cursor stack, shift-click wipes the inventory. */
+  destroy?: boolean;
+  /** Static hover tooltip for slots that never hold an item (destroy slot). */
+  tooltip?: string;
   el?: HTMLElement;
 }
 
@@ -31,6 +36,160 @@ export interface ScreenHooks {
 }
 
 const DOUBLE_CLICK_MS = 350;
+
+// ---------------- creative tabs ----------------
+
+interface CreativeTab {
+  name: string;
+  /** Item id drawn on the folder tab (the Search tab draws its own magnifier). */
+  iconId: number;
+  ids: number[];
+}
+
+const TAB_BUILDING = 0;
+const TAB_DECORATION = 1;
+const TAB_FOOD = 2;
+const TAB_COMBAT = 3;
+const TAB_MATERIALS = 4;
+/** Pseudo-tab: search box over the full item list. */
+const TAB_SEARCH = 5;
+
+/** Stragglers the predicates in classifyItem would misfile (vanilla parity). */
+const TAB_OVERRIDES = new Map<number, number>([
+  [B.Leaves, TAB_DECORATION],
+  [B.CraftingTable, TAB_DECORATION],
+  [B.Furnace, TAB_DECORATION],
+  [B.Chest, TAB_DECORATION],
+  // Liquids are placeable full-cube sources here, so they live with the blocks.
+  [B.Water, TAB_BUILDING],
+  [B.Lava, TAB_BUILDING],
+  [B.TNT, TAB_COMBAT],
+  [I.Wheat, TAB_FOOD],
+  [I.Sugar, TAB_FOOD],
+  [I.FlintAndSteel, TAB_COMBAT],
+  [I.Bow, TAB_COMBAT],
+  [I.Arrow, TAB_COMBAT],
+  [I.Shears, TAB_COMBAT],
+  [I.Bucket, TAB_COMBAT],
+  [I.WaterBucket, TAB_COMBAT],
+  [I.LavaBucket, TAB_COMBAT],
+  [I.MilkBucket, TAB_COMBAT], // has .food, but vanilla files it with the buckets
+]);
+
+function classifyItem(id: number): number {
+  const override = TAB_OVERRIDES.get(id);
+  if (override !== undefined) return override;
+  const def = itemDef(id);
+  if (def.tool || def.armor) return TAB_COMBAT;
+  if (def.food) return TAB_FOOD;
+  if (isBlockId(id)) {
+    const b = blockDef(id);
+    if (b.render === RENDER_CROSS || b.needsSupport || b.emission > 0) return TAB_DECORATION;
+    if (b.solid) return TAB_BUILDING;
+  }
+  // Guard: anything unclassified still gets a home.
+  return TAB_MATERIALS;
+}
+
+let cachedTabs: CreativeTab[] | null = null;
+
+/** The five vanilla-style categories plus Search; every id lands in exactly one category. */
+export function creativeTabs(): CreativeTab[] {
+  if (cachedTabs) return cachedTabs;
+  const tabs: CreativeTab[] = [
+    { name: 'Building Blocks', iconId: B.Brick, ids: [] },
+    { name: 'Decoration', iconId: B.Poppy, ids: [] },
+    { name: 'Foodstuffs', iconId: I.GoldenApple, ids: [] },
+    { name: 'Tools & Combat', iconId: toolId(4, 0), ids: [] }, // diamond sword
+    { name: 'Materials', iconId: I.IronIngot, ids: [] },
+    { name: 'Search Items', iconId: -1, ids: [] }, // ids unused: search filters allItemIds()
+  ];
+  for (const id of allItemIds()) tabs[classifyItem(id)].ids.push(id);
+  cachedTabs = tabs;
+  return tabs;
+}
+
+/** Last tab the player had open — restored when the screen reopens (session-scoped). */
+let lastCreativeTab = TAB_BUILDING;
+
+/** Copy a 32px icon onto a fresh 24px canvas so cached icon canvases are never reparented. */
+function tabIcon(src: HTMLCanvasElement | null): HTMLCanvasElement | null {
+  if (!src) return null;
+  const c = document.createElement('canvas');
+  c.width = 24;
+  c.height = 24;
+  const ctx = c.getContext('2d')!;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(src, 0, 0, 24, 24);
+  return c;
+}
+
+/** 24px magnifying glass for the Search tab (it has no item id). */
+function drawMagnifierIcon(): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = 24;
+  c.height = 24;
+  const ctx = c.getContext('2d')!;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = '#2c2c2c';
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.arc(10, 10, 6, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(15, 15);
+  ctx.lineTo(20, 20);
+  ctx.stroke();
+  ctx.strokeStyle = '#b9825d';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(15, 15);
+  ctx.lineTo(19.5, 19.5);
+  ctx.stroke();
+  ctx.strokeStyle = '#e8e8e8';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(10, 10, 6, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(140, 200, 255, 0.35)';
+  ctx.beginPath();
+  ctx.arc(10, 10, 5, 0, Math.PI * 2);
+  ctx.fill();
+  return c;
+}
+
+/** Red X for the creative "destroy item" slot. */
+function drawDestroyIcon(): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = 32;
+  c.height = 32;
+  const ctx = c.getContext('2d')!;
+  ctx.lineCap = 'square';
+  const cross = (color: string, width: number): void => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.moveTo(8, 8);
+    ctx.lineTo(24, 24);
+    ctx.moveTo(24, 8);
+    ctx.lineTo(8, 24);
+    ctx.stroke();
+  };
+  cross('#4d0000', 9);
+  cross('#c22323', 5);
+  return c;
+}
+
+let creativeCssInjected = false;
+
+/** style.css is owned elsewhere; all creative-tab styling is injected from here (chat.ts pattern). */
+function ensureCreativeCss(): void {
+  if (creativeCssInjected) return;
+  creativeCssInjected = true;
+  const style = document.createElement('style');
+  style.textContent = CREATIVE_CSS;
+  document.head.appendChild(style);
+}
 
 /**
  * Modal container GUIs with vanilla slot semantics:
@@ -413,28 +572,57 @@ export class Screens {
   }
 
   /**
-   * Creative item picker: an infinite-source grid of every item.
+   * Creative item picker, vanilla style: folder tabs on top of the panel,
+   * a fixed 9-wide scrolling item page, and the hotbar below.
    * Left-click puts a full stack on the cursor (same item clears it),
    * right-click adds one, shift-click sends a stack to the inventory.
    */
   private buildCreativeScreen(panel: HTMLElement): void {
-    this.title(panel, 'Creative Inventory');
+    ensureCreativeCss();
+    panel.classList.add('creative-panel');
+    const tabs = creativeTabs();
 
+    const strip = document.createElement('div');
+    strip.className = 'ctab-strip';
+    panel.appendChild(strip);
+
+    // Header row: tab name on the left, search box (Search tab only) on the right.
+    const head = document.createElement('div');
+    head.className = 'creative-head';
+    const titleEl = document.createElement('div');
+    titleEl.className = 'gui-title creative-title';
     const search = document.createElement('input');
     search.className = 'mc-input creative-search';
     search.placeholder = 'Search Items';
-    panel.appendChild(search);
+    head.append(titleEl, search);
+    panel.appendChild(head);
 
     const wrap = document.createElement('div');
     wrap.className = 'creative-scroll';
     panel.appendChild(wrap);
 
-    const build = (): void => {
-      this.slots = this.slots.filter((s) => s.group !== 'picker');
-      if (this.hovered?.group === 'picker') this.hovered = null;
+    const tabEls: HTMLElement[] = [];
+
+    const rebuild = (): void => {
+      const active = lastCreativeTab;
+      const isSearch = active === TAB_SEARCH;
+      for (let i = 0; i < tabEls.length; i++) tabEls[i].classList.toggle('ctab-active', i === active);
+      titleEl.textContent = tabs[active].name;
+      search.classList.toggle('hidden', !isSearch);
+
+      // Drop stale picker specs (keep the destroy slot — it lives in the hotbar row).
+      this.slots = this.slots.filter((s) => s.group !== 'picker' || s.destroy === true);
+      if (this.hovered?.group === 'picker' && !this.hovered.destroy) this.hovered = null;
       wrap.innerHTML = '';
-      const q = search.value.trim().toLowerCase();
-      const ids = allItemIds().filter((id) => !q || itemDef(id).name.toLowerCase().includes(q));
+      wrap.scrollTop = 0;
+
+      let ids: number[];
+      if (isSearch) {
+        const q = search.value.trim().toLowerCase();
+        ids = allItemIds().filter((id) => !q || itemDef(id).name.toLowerCase().includes(q));
+      } else {
+        ids = tabs[active].ids;
+      }
       const grid = document.createElement('div');
       grid.className = 'slot-grid';
       grid.style.gridTemplateColumns = 'repeat(9, 40px)';
@@ -449,15 +637,84 @@ export class Screens {
       wrap.appendChild(grid);
       this.renderAll();
     };
-    search.addEventListener('input', build);
-    search.addEventListener('keydown', (e) => e.stopPropagation());
-    build();
+
+    tabs.forEach((tab, i) => {
+      const el = document.createElement('div');
+      el.className = 'ctab';
+      const icon = i === TAB_SEARCH ? drawMagnifierIcon() : tabIcon(this.icons.icon(tab.iconId));
+      if (icon) {
+        icon.classList.add('ctab-icon');
+        el.appendChild(icon);
+      }
+      el.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        if (lastCreativeTab === i) return;
+        lastCreativeTab = i;
+        this.hooks.playClick();
+        if (i === TAB_SEARCH) search.value = '';
+        rebuild();
+        if (i === TAB_SEARCH) requestAnimationFrame(() => search.focus());
+      });
+      el.addEventListener('mouseenter', () => {
+        this.tooltip.textContent = tab.name;
+        this.tooltip.classList.remove('hidden');
+      });
+      el.addEventListener('mouseleave', () => this.tooltip.classList.add('hidden'));
+      strip.appendChild(el);
+      tabEls.push(el);
+    });
+
+    search.addEventListener('input', rebuild);
+    // Keep game hotkeys out of the input, but let Escape bubble so the
+    // document-level handler can still close the screen while typing.
+    search.addEventListener('keydown', (e) => {
+      if (e.code === 'Escape') {
+        search.blur();
+        return;
+      }
+      e.stopPropagation();
+    });
+    rebuild();
+    if (lastCreativeTab === TAB_SEARCH) requestAnimationFrame(() => search.focus());
   }
 
   private buildPlayerSection(panel: HTMLElement): void {
     const spacer = document.createElement('div');
     spacer.style.height = '10px';
     panel.appendChild(spacer);
+
+    const hotbarSpec = (i: number): SlotSpec => ({
+      get: () => this.inventory.slots[i],
+      set: (s) => { this.inventory.slots[i] = s; this.inventory.changed(); },
+      accepts: () => true,
+      group: 'hotbar',
+    });
+
+    // Creative shows just the hotbar (vanilla), plus the destroy-item slot.
+    if (this.kind === 'creative') {
+      const row = document.createElement('div');
+      row.className = 'creative-hotbar-row';
+      const grid = document.createElement('div');
+      grid.className = 'slot-grid';
+      grid.style.gridTemplateColumns = 'repeat(9, 40px)';
+      for (let i = 0; i < 9; i++) grid.appendChild(this.makeSlotEl(hotbarSpec(i)));
+      const destroyEl = this.makeSlotEl({
+        get: () => null,
+        set: () => {},
+        accepts: () => false,
+        group: 'picker',
+        destroy: true,
+        tooltip: 'Destroy Item',
+      });
+      destroyEl.classList.add('creative-destroy');
+      const x = drawDestroyIcon();
+      x.className = 'creative-x';
+      destroyEl.appendChild(x);
+      row.append(grid, destroyEl);
+      panel.appendChild(row);
+      return;
+    }
+
     // Vanilla labels the player section in every container GUI (not the
     // survival inventory itself).
     if (this.kind !== 'inventory') {
@@ -475,12 +732,7 @@ export class Screens {
     const gap = document.createElement('div');
     gap.style.height = '8px';
     panel.appendChild(gap);
-    this.grid(panel, 9, 9, (i) => ({
-      get: () => this.inventory.slots[i],
-      set: (s) => { this.inventory.slots[i] = s; this.inventory.changed(); },
-      accepts: () => true,
-      group: 'hotbar',
-    }));
+    this.grid(panel, 9, 9, hotbarSpec);
   }
 
   // ---------------- slot elements + interaction ----------------
@@ -526,7 +778,7 @@ export class Screens {
         const isDouble = this.lastClickSpec === spec && now - this.lastClickTime < DOUBLE_CLICK_MS;
         this.lastClickSpec = spec;
         this.lastClickTime = now;
-        if (isDouble && this.cursor && !spec.result) {
+        if (isDouble && this.cursor && !spec.result && !spec.destroy) {
           this.gatherAll();
         } else if (this.canDragInto(spec)) {
           // Defer placement: this becomes a click on release, or an even
@@ -566,6 +818,9 @@ export class Screens {
       const s = spec.get();
       if (s && !this.cursor) {
         this.tooltip.textContent = itemDef(s.id).name;
+        this.tooltip.classList.remove('hidden');
+      } else if (spec.tooltip && !this.cursor) {
+        this.tooltip.textContent = spec.tooltip;
         this.tooltip.classList.remove('hidden');
       }
     });
@@ -651,6 +906,12 @@ export class Screens {
   }
 
   private leftClick(spec: SlotSpec): void {
+    // Creative destroy slot: dump the carried stack.
+    if (spec.destroy) {
+      this.cursor = null;
+      return;
+    }
+
     const inSlot = spec.get();
 
     if (spec.group === 'picker') {
@@ -718,6 +979,11 @@ export class Screens {
   }
 
   private rightClick(spec: SlotSpec): void {
+    if (spec.destroy) {
+      this.cursor = null;
+      return;
+    }
+
     const inSlot = spec.get();
 
     if (spec.group === 'picker') {
@@ -759,6 +1025,13 @@ export class Screens {
   }
 
   private shiftClick(spec: SlotSpec, doubleClick = false): void {
+    // Creative destroy slot: shift-click wipes the whole inventory (vanilla).
+    if (spec.destroy) {
+      this.cursor = null;
+      this.inventory.clear();
+      return;
+    }
+
     // Shift+double-click: bulk-move every stack matching the clicked item.
     if (doubleClick) {
       const ref = spec.get() ?? this.lastShiftMoved;
@@ -1006,3 +1279,109 @@ function drawPlayerPortrait(): HTMLCanvasElement {
 
   return canvas;
 }
+
+// ---------------- injected creative styles ----------------
+
+// Everything here is scoped to .creative-* / .ctab-* so the shared
+// stylesheet (owned by another module) is never restyled.
+const CREATIVE_CSS = `
+.creative-panel { position: relative; }
+
+/* Folder tabs riding on the panel's top edge. The strip is pulled up past the
+   panel border (padding 14 + border 3 + outline 2), so the selected tab can
+   dip 6px into the panel and merge with its background. */
+.ctab-strip {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 42px;
+  margin: -53px 0 12px;
+  position: relative;
+  z-index: 1;
+}
+.ctab {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 34px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #8b8b8b;
+  border: 2px solid #000;
+  border-radius: 4px 4px 0 0;
+  box-shadow: inset 1px 1px 0 rgba(255, 255, 255, 0.3), inset -1px -1px 0 rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+.ctab:not(.ctab-active):hover { background: #a2a2a2; }
+.ctab.ctab-active {
+  height: 42px;
+  margin-bottom: 0;
+  background: #c6c6c6;
+  border-bottom: none;
+  box-shadow: inset 2px 2px 0 rgba(255, 255, 255, 0.9), inset -2px 0 0 rgba(0, 0, 0, 0.25);
+  cursor: default;
+}
+.ctab-icon {
+  width: 24px;
+  height: 24px;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+/* Keep the icon optically centered on the part of the tab above the panel. */
+.ctab.ctab-active .ctab-icon { margin-bottom: 8px; }
+
+.creative-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+  margin-bottom: 4px;
+}
+.creative-title.gui-title { margin-bottom: 0; }
+.creative-panel .creative-search {
+  width: 210px;
+  height: 30px;
+  margin: 0;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+/* Fixed 9x5 page with a vanilla-style scrollbar. */
+.creative-panel .creative-scroll {
+  height: 218px;
+  max-height: none;
+  overflow-y: scroll;
+  border: 2px solid;
+  border-color: #373737 #fff #fff #373737;
+  background: #8b8b8b;
+  padding: 3px;
+  margin-bottom: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: #b0b0b0 #242424;
+}
+.creative-panel .creative-scroll .slot-grid { justify-content: start; }
+.creative-panel .creative-scroll::-webkit-scrollbar { width: 12px; }
+.creative-panel .creative-scroll::-webkit-scrollbar-track {
+  background: #242424;
+  border: 1px solid #000;
+}
+.creative-panel .creative-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(90deg, #d8d8d8, #a8a8a8 60%, #787878);
+  border: 1px solid #000;
+}
+
+.creative-hotbar-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.creative-x {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+`;
