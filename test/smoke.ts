@@ -52,18 +52,26 @@ check('surface block is solid', isSolid(world.getBlockAt(spawn.x, sy, spawn.z)))
 check('above surface is not solid', !isSolid(world.getBlockAt(spawn.x, sy + 1, spawn.z)));
 check('bedrock at y=0', world.getBlockAt(spawn.x, 0, spawn.z) === B.Bedrock);
 
-// --- biome coherence: regions must be large, no confetti biomes ---
+// --- biome coherence: regions must be huge, with fractal (not noisy) borders ---
 {
   const terrain = world.terrain;
-  // Along a long transect, biome changes should be rare (large regions)...
-  let changes = 0;
-  let prev = terrain.biomeAt(-4000, 1234);
-  for (let x = -4000 + 8; x <= 4000; x += 8) {
-    const b = terrain.biomeAt(x, 1234);
-    if (b !== prev) changes++;
-    prev = b;
+  // Walk a 12km transect. Fractal borders flicker while crossing, so collapse
+  // runs shorter than 200 blocks and count changes between the real regions.
+  const biomes: string[] = [];
+  for (let x = -6000; x <= 6000; x += 8) biomes.push(terrain.biomeAt(x, 1234));
+  const runs: { b: string; len: number }[] = [];
+  for (const b of biomes) {
+    const last = runs[runs.length - 1];
+    if (last && last.b === b) last.len++;
+    else runs.push({ b, len: 1 });
   }
-  check('biome regions are large (few changes over 8km)', changes <= 25, `got ${changes} changes`);
+  const major = runs.filter((r) => r.len >= 25); // >= 200 blocks
+  let borderCrossings = 0;
+  for (let k = 1; k < major.length; k++) {
+    if (major[k].b !== major[k - 1].b) borderCrossings++;
+  }
+  check('biome regions are huge (1-13 real borders over 12km)', borderCrossings >= 1 && borderCrossings <= 13, `got ${borderCrossings}`);
+  check('borders crinkle but do not shatter', runs.length <= 60, `got ${runs.length} raw runs`);
   // ...and deterministic.
   check('biomeAt deterministic', terrain.biomeAt(321, -654) === terrain.biomeAt(321, -654));
   // Height continuity: no cliffs between adjacent columns on ordinary terrain.
@@ -72,6 +80,30 @@ check('bedrock at y=0', world.getBlockAt(spawn.x, 0, spawn.z) === B.Bedrock);
     maxStep = Math.max(maxStep, Math.abs(terrain.heightAt(x, 77) - terrain.heightAt(x + 1, 77)));
   }
   check('height is continuous (max step <= 6 incl mountains)', maxStep <= 6, `got ${maxStep}`);
+}
+
+// --- caves and ores in the generated chunks (before any test edits) ---
+{
+  let deep = 0, carved = 0, redstone = 0;
+  for (let cx = -2; cx <= 2; cx++) {
+    for (let cz = -2; cz <= 2; cz++) {
+      const ch = world.getGeneratedChunk(cx, cz);
+      if (!ch) continue;
+      for (let lx = 0; lx < 16; lx++) {
+        for (let lz = 0; lz < 16; lz++) {
+          for (let y = 8; y < 50; y++) {
+            const id = ch.getBlock(lx, y, lz);
+            deep++;
+            if (id === B.Air || id === B.Lava) carved++;
+            if (id === B.RedstoneOre && y < 16) redstone++;
+          }
+        }
+      }
+    }
+  }
+  const ratio = carved / Math.max(1, deep);
+  check('cave carve ratio y8..50 sane', ratio > 0.015 && ratio < 0.18, `got ${(ratio * 100).toFixed(2)}%`);
+  check('redstone ore generates below y=16', redstone > 0, `got ${redstone}`);
 }
 
 // --- sky light ---

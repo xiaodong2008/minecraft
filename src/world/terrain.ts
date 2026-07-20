@@ -25,27 +25,67 @@ interface Climate {
   forest: number;
 }
 
+/** Per-column ravine descriptor (null when the column has no ravine). */
+interface RavineCol {
+  ridge: number;
+  y0: number;
+  y1: number;
+}
+
 const TREE_MARGIN = 3; // max canopy overhang, checked around chunk borders
 
 // --- climate tuning ---
-// Temperature and moisture are single-octave and VERY low frequency so biome
-// regions span several hundred to a couple thousand blocks. Gentle domain
-// warping makes borders meander organically instead of forming round blobs.
-const TEMP_FREQ = 0.0006; // wavelength ~1650 blocks
-const MOIST_FREQ = 0.00068; // wavelength ~1470 blocks
-const WARP_FREQ = 0.0006;
-const WARP_AMP = 120; // blocks of border meander
+// Temperature and moisture are single-octave and VERY low frequency, so one
+// biome stretches for thousands of blocks before the climate drifts across a
+// threshold. Borders are made fractal (coastline-like) in two ways:
+//  1. multi-scale domain warping — a continental warp, a medium meander and a
+//     small ripple are summed, so the border wiggles at every zoom level;
+//  2. a small high-frequency nudge added straight to the climate values, which
+//     crinkles the threshold contours even where the base fields are flat.
+const TEMP_FREQ = 0.00025; // wavelength ~4000 blocks
+const MOIST_FREQ = 0.00028; // wavelength ~3600 blocks
+const WARP_L_FREQ = 0.0004;
+const WARP_L_AMP = 320; // continental meander (hundreds of blocks)
+const WARP_M_FREQ = 0.002;
+const WARP_M_AMP = 55; // medium wiggle
+const WARP_S_FREQ = 0.012;
+const WARP_S_AMP = 9; // local ripple
+const EDGE_FREQ = 0.01;
+const EDGE_AMP = 0.022; // climate-space crinkle at the thresholds
 
 // Biome thresholds in climate space (factor 0.5 = biome border). BAND is the
-// half-width of the transition ramp: 0.02 in climate units is roughly a
-// 20-40 block dither band on the ground at these noise frequencies. The moist
-// gap between desert (< 0.02) and forest (> 0.14) keeps a wide plains strip
-// between them so deserts never touch forests directly.
-const SNOW_TEMP = 0.34; // snow when temp < -0.34
-const DESERT_TEMP = 0.3; // desert when temp > 0.30 ...
-const DESERT_MOIST = 0.0; // ... and moist < 0
-const FOREST_MOIST = 0.16; // forest when moist > 0.16
-const BAND = 0.02;
+// half-width of the transition ramp; at these frequencies 0.012 climate units
+// come out as roughly a 15-40 block dither band on the ground. The moist gap
+// between desert (< 0.04) and forest (> 0.14) keeps a plains strip between
+// them so deserts never touch forests directly.
+const SNOW_TEMP = 0.3; // snow when temp < -0.30
+const DESERT_TEMP = 0.26; // desert when temp > 0.26 ...
+const DESERT_MOIST = 0.04; // ... and moist < 0.04
+const FOREST_MOIST = 0.14; // forest when moist > 0.14
+const BAND = 0.01;
+
+// --- cave tuning ---
+// Spaghetti tunnels: intersection of two 3D noise bands, stretched so they run
+// mostly horizontal. The band half-width breathes with a slow thickness noise
+// between W_BASE - W_VAR (pinched shut) and W_BASE + W_VAR (rooms ~4 radius).
+const CAVE_XZ_FREQ = 0.014;
+const CAVE_Y_FREQ = 0.035;
+const CAVE_W_BASE = 0.06;
+const CAVE_W_VAR = 0.05;
+const CAVE_THICK_FREQ = 0.005; // horizontal; vertical runs at 2x
+// Cheese caverns: threshold tightens toward CHEESE_MAX_Y so caverns fade out
+// on the way up and get big and frequent deep down.
+const CHEESE_XZ_FREQ = 0.013;
+const CHEESE_Y_FREQ = 0.03;
+const CHEESE_MAX_Y = 50;
+// Ravines: rare long slashes along the zero contours of a low-frequency 2D
+// ridged noise, gated by an even lower-frequency mask so only occasional
+// stretches of a contour become an actual ravine.
+const RAVINE_LINE_FREQ = 0.003;
+const RAVINE_TH = 0.9855;
+const RAVINE_WALL_AMP = 0.0065; // rough walls: 3D noise wobbles the threshold
+const RAVINE_MASK_FREQ = 0.0018;
+const RAVINE_MASK_TH = 0.55;
 
 /**
  * Mountain tops at/above this height get a snow surface block in any biome
@@ -69,8 +109,14 @@ export class Terrain {
   private readonly moistNoise: Simplex2;
   private readonly warpXNoise: Simplex2;
   private readonly warpZNoise: Simplex2;
+  private readonly climateEdgeNoise: Simplex2;
+  private readonly ravineLineNoise: Simplex2;
+  private readonly ravineMaskNoise: Simplex2;
   private readonly caveNoiseA: Simplex3;
   private readonly caveNoiseB: Simplex3;
+  private readonly caveThickNoise: Simplex3;
+  private readonly cheeseNoise: Simplex3;
+  private readonly ravineWallNoise: Simplex3;
   private readonly oreNoiseA: Simplex3;
   private readonly oreNoiseB: Simplex3;
   private readonly oreNoiseC: Simplex3;
@@ -86,8 +132,14 @@ export class Terrain {
     this.moistNoise = new Simplex2(this.seed ^ 0xdead);
     this.warpXNoise = new Simplex2(this.seed ^ 0x6f77);
     this.warpZNoise = new Simplex2(this.seed ^ 0x8e99);
+    this.climateEdgeNoise = new Simplex2(this.seed ^ 0x7717);
+    this.ravineLineNoise = new Simplex2(this.seed ^ 0x8f21);
+    this.ravineMaskNoise = new Simplex2(this.seed ^ 0x94a3);
     this.caveNoiseA = new Simplex3(this.seed ^ 0x1111);
     this.caveNoiseB = new Simplex3(this.seed ^ 0x2222);
+    this.caveThickNoise = new Simplex3(this.seed ^ 0x6ee6);
+    this.cheeseNoise = new Simplex3(this.seed ^ 0x7cc7);
+    this.ravineWallNoise = new Simplex3(this.seed ^ 0x8dd8);
     this.oreNoiseA = new Simplex3(this.seed ^ 0x3333);
     this.oreNoiseB = new Simplex3(this.seed ^ 0x4444);
     this.oreNoiseC = new Simplex3(this.seed ^ 0x5555);
@@ -99,10 +151,20 @@ export class Terrain {
 
   /** Low-frequency, domain-warped climate at a column. Pure and deterministic. */
   private climateAt(x: number, z: number): Climate {
-    const wx = x + this.warpXNoise.noise(x * WARP_FREQ, z * WARP_FREQ) * WARP_AMP;
-    const wz = z + this.warpZNoise.noise(x * WARP_FREQ, z * WARP_FREQ) * WARP_AMP;
-    const temp = this.tempNoise.noise(wx * TEMP_FREQ, wz * TEMP_FREQ);
-    const moist = this.moistNoise.noise(wx * MOIST_FREQ, wz * MOIST_FREQ);
+    // Three warp octaves summed (offsets decorrelate the octaves): the border
+    // meanders over hundreds of blocks yet still wiggles block-to-block.
+    const wx = x +
+      this.warpXNoise.noise(x * WARP_L_FREQ, z * WARP_L_FREQ) * WARP_L_AMP +
+      this.warpXNoise.noise(x * WARP_M_FREQ + 137.1, z * WARP_M_FREQ - 61.7) * WARP_M_AMP +
+      this.warpXNoise.noise(x * WARP_S_FREQ - 293.3, z * WARP_S_FREQ + 211.9) * WARP_S_AMP;
+    const wz = z +
+      this.warpZNoise.noise(x * WARP_L_FREQ, z * WARP_L_FREQ) * WARP_L_AMP +
+      this.warpZNoise.noise(x * WARP_M_FREQ - 87.3, z * WARP_M_FREQ + 43.9) * WARP_M_AMP +
+      this.warpZNoise.noise(x * WARP_S_FREQ + 179.7, z * WARP_S_FREQ - 331.1) * WARP_S_AMP;
+    const temp = this.tempNoise.noise(wx * TEMP_FREQ, wz * TEMP_FREQ) +
+      this.climateEdgeNoise.noise(x * EDGE_FREQ, z * EDGE_FREQ) * EDGE_AMP;
+    const moist = this.moistNoise.noise(wx * MOIST_FREQ, wz * MOIST_FREQ) +
+      this.climateEdgeNoise.noise(x * EDGE_FREQ + 517.3, z * EDGE_FREQ - 417.7) * EDGE_AMP;
     const snow = ramp01(-temp, SNOW_TEMP - BAND, SNOW_TEMP + BAND);
     const desert = Math.min(
       ramp01(temp, DESERT_TEMP - BAND, DESERT_TEMP + BAND),
@@ -207,6 +269,7 @@ export class Terrain {
         const colBase = chunkIndex(lx, 0, lz);
 
         const bedrockDepth = hash2(wx, wz, this.seed ^ 0xbed) < 0.4 ? 2 : 1;
+        const ravine = this.ravineAt(wx, wz, h);
 
         for (let y = 0; y <= h; y++) {
           let id: number;
@@ -228,11 +291,12 @@ export class Terrain {
             id = B.Stone;
           }
 
-          // Carve caves through stone/dirt (keep bedrock and shorelines intact).
-          // Deep cavities below y=11 flood with lava.
+          // Carve caves and ravines through stone/dirt (keep bedrock and
+          // shorelines intact). Deep cavities below y=11 flood with lava.
           if (id !== B.Bedrock && y > bedrockDepth) {
             const nearSeaSurface = h <= SEA_LEVEL + 1 && y > h - 4;
-            if (!nearSeaSurface && this.isCave(wx, y, wz)) {
+            if (!nearSeaSurface &&
+                ((ravine !== null && this.inRavine(wx, y, wz, ravine)) || this.isCave(wx, y, wz))) {
               blocks[colBase + y] = y <= 11 ? B.Lava : B.Air;
               continue;
             }
@@ -260,16 +324,52 @@ export class Terrain {
 
   private isCave(x: number, y: number, z: number): boolean {
     if (y < 4) return false;
-    // Spaghetti tunnels: intersection of two noise bands.
-    const a = this.caveNoiseA.noise(x * 0.015, y * 0.028, z * 0.015);
-    const b = this.caveNoiseB.noise(x * 0.015, y * 0.028, z * 0.015);
-    if (Math.abs(a) < 0.075 && Math.abs(b) < 0.075) return true;
-    // Cheese caverns deep down.
-    if (y < 42) {
-      const c = this.caveNoiseA.noise(x * 0.024, y * 0.045, z * 0.024);
-      if (c > 0.66) return true;
+    // Spaghetti tunnels: intersection of two noise bands. The shared width w
+    // breathes with a slow thickness noise, so a tunnel swells into a room,
+    // narrows to a crawlspace and pinches shut instead of staying uniform.
+    const a = this.caveNoiseA.noise(x * CAVE_XZ_FREQ, y * CAVE_Y_FREQ, z * CAVE_XZ_FREQ);
+    const aa = Math.abs(a);
+    if (aa < CAVE_W_BASE + CAVE_W_VAR) { // early-out before two more evals
+      const t = this.caveThickNoise.noise(x * CAVE_THICK_FREQ, y * CAVE_THICK_FREQ * 2, z * CAVE_THICK_FREQ);
+      const w = CAVE_W_BASE + CAVE_W_VAR * t;
+      if (aa < w) {
+        const b = this.caveNoiseB.noise(x * CAVE_XZ_FREQ, y * CAVE_Y_FREQ, z * CAVE_XZ_FREQ);
+        if (Math.abs(b) < w) return true;
+      }
+    }
+    // Cheese caverns: threshold relaxes with depth — none above y=50, huge
+    // lava-floored halls near the bottom of the world.
+    if (y < CHEESE_MAX_Y) {
+      const c = this.cheeseNoise.noise(x * CHEESE_XZ_FREQ, y * CHEESE_Y_FREQ, z * CHEESE_XZ_FREQ);
+      if (c > 0.6 + 0.32 * (y / CHEESE_MAX_Y)) return true;
     }
     return false;
+  }
+
+  /**
+   * Ravine test for a whole column: a rare long slash whose floor sits around
+   * y~20 and whose top stops 3-6 blocks below the surface. Sea/shore columns
+   * never host ravines so the ocean cannot drain into them.
+   */
+  private ravineAt(x: number, z: number, h: number): RavineCol | null {
+    if (h <= SEA_LEVEL + 1) return null;
+    const m = this.ravineMaskNoise.noise(x * RAVINE_MASK_FREQ, z * RAVINE_MASK_FREQ);
+    if (m <= RAVINE_MASK_TH) return null;
+    const ridge = 1 - Math.abs(this.ravineLineNoise.noise(x * RAVINE_LINE_FREQ, z * RAVINE_LINE_FREQ));
+    if (ridge <= RAVINE_TH - RAVINE_WALL_AMP) return null;
+    // Depth/roof vary smoothly with the mask strength, not per-column hash.
+    const mm = Math.min(1, (m - RAVINE_MASK_TH) / 0.35);
+    const y0 = 24 - Math.round(mm * 6); // floor y ~18..24
+    const y1 = h - 6 + Math.round(mm * 3); // roof 3..6 below the surface
+    return y1 > y0 ? { ridge, y0, y1 } : null;
+  }
+
+  /** Per-block ravine carve test: rough walls and a narrowing V floor. */
+  private inRavine(x: number, y: number, z: number, r: RavineCol): boolean {
+    if (y < r.y0 || y > r.y1) return false;
+    const wall = this.ravineWallNoise.noise(x * 0.06, y * 0.1, z * 0.06);
+    const taper = Math.max(0, r.y0 + 5 - y) * 0.0022;
+    return r.ridge + wall * RAVINE_WALL_AMP > RAVINE_TH + taper;
   }
 
   private oreAt(x: number, y: number, z: number): number | null {
@@ -281,6 +381,7 @@ export class Terrain {
     if (b < -0.81 && y < 18) return B.DiamondOre;
     const c = this.oreNoiseC.noise(x * 0.16, y * 0.16, z * 0.16);
     if (c > 0.78 && y < 32) return B.LapisOre;
+    if (c < -0.7 && y < 16) return B.RedstoneOre;
     return null;
   }
 
