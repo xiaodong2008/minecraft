@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>WebCraft — survival</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='10' y='6' fill='%23795c39'/%3E%3Crect width='16' height='6' fill='%2379b944'/%3E%3C/svg%3E" />
+    <style>
+      /* Monocraft — OFL-licensed Minecraft-style pixel font by IdreesInc. */
+      @font-face {
+        font-family: 'Monocraft';
+        src: url('https://cdn.jsdelivr.net/gh/IdreesInc/Monocraft@4.2.1/dist/Monocraft-otf/Monocraft.otf') format('opentype');
+        font-display: swap;
+      }
+    </style>
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
@@ -46,20 +54,23 @@
       <div id="cursor-item" class="hidden"></div>
       <div id="tooltip" class="hidden"></div>
 
-      <!-- title -->
-      <div id="menu-title" class="overlay menu dirt-bg">
+      <!-- title (transparent: the live panorama renders behind it) -->
+      <div id="menu-title" class="overlay menu">
         <div class="menu-inner title-inner">
           <div class="logo-wrap">
-            <div class="logo">WEBCRAFT</div>
+            <canvas id="logo-canvas" width="433" height="73" role="img" aria-label="WEBCRAFT"></canvas>
             <div id="splash">100% browser!</div>
           </div>
           <div class="menu-stack title-stack">
             <button id="btn-singleplayer" class="mc-btn wide">Singleplayer</button>
             <button class="mc-btn wide" disabled>Multiplayer</button>
-            <button id="btn-title-options" class="mc-btn wide">Options...</button>
+            <div class="menu-row2 title-row2">
+              <button id="btn-title-options" class="mc-btn half">Options...</button>
+              <button id="btn-title-controls" class="mc-btn half">Controls...</button>
+            </div>
           </div>
-          <div class="corner-text left">WebCraft (procedural, zero assets)</div>
-          <div class="corner-text right">Copyright WebCraft. Do not distribute!</div>
+          <div class="corner-text left">WebCraft 0.1 (procedural, zero assets)</div>
+          <div class="corner-text right">Not affiliated with Mojang</div>
         </div>
       </div>
 
@@ -158,8 +169,8 @@
         </div>
       </div>
 
-      <!-- controls (read-only keybind list) -->
-      <div id="menu-controls" class="overlay pause-bg hidden">
+      <!-- controls (read-only keybind list; dirt like vanilla) -->
+      <div id="menu-controls" class="overlay dirt-bg hidden">
         <div class="menu-inner controls-inner menu-sheet">
           <h2 class="menu-heading">Controls</h2>
           <div class="sheet-body">

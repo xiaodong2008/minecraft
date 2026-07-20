@@ -44,6 +44,185 @@ const GUI_SCALE_STEPS: { value: number; label: string }[] = [
   { value: 1.3, label: 'Large' },
 ];
 
+// ---------------- procedural UI art (button texture + title logo) ----------------
+
+/** Small deterministic RNG so the stone speckle is identical on every load. */
+function makeRng(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Vanilla widgets.png-style button face: 200x20, per-pixel gray speckle with a
+ * baked 1px black border, 2px light top/left inner bevel and 2px dark
+ * bottom/right inner bevel. Returns the base texture plus the blue-steel
+ * hover tint as data URLs.
+ */
+function buildButtonTextures(): { base: string; hover: string } {
+  const w = 200;
+  const h = 20;
+  const rng = makeRng(0xb17705);
+  const vals = new Float64Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let v: number;
+      if (x === 0 || y === 0 || x === w - 1 || y === h - 1) v = 0;
+      else if (x >= w - 3 || y >= h - 3) v = 82 + rng() * 10; // #565656-ish shade
+      else if (x <= 2 || y <= 2) v = 164 + rng() * 14; // #aaa-ish highlight
+      else v = rng() < 0.25 ? 108 + rng() * 10 : 130 + rng() * 18; // #6f6f6f / #8b8b8b speckle
+      vals[y * w + x] = v;
+    }
+  }
+  const render = (tint: (v: number) => [number, number, number]): string => {
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d')!;
+    const img = ctx.createImageData(w, h);
+    for (let i = 0; i < w * h; i++) {
+      const [r, g, b] = tint(vals[i]);
+      img.data[i * 4] = r;
+      img.data[i * 4 + 1] = g;
+      img.data[i * 4 + 2] = b;
+      img.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    return canvas.toDataURL();
+  };
+  const base = render((v) => [v, v, v]);
+  // Hover: multiply every base pixel toward vanilla's blue-steel #90a8d8
+  // (rescaled so the face keeps roughly its original brightness).
+  const hover = render((v) => [
+    Math.min(255, v * (0x90 / 255) * 1.6),
+    Math.min(255, v * (0xa8 / 255) * 1.6),
+    Math.min(255, v * (0xd8 / 255) * 1.6),
+  ]);
+  return { base, hover };
+}
+
+/** 5x7 pixel font for the logo, '#' marks a solid pixel. Uppercase A-Z. */
+const LOGO_GLYPHS: Record<string, string[]> = {
+  A: ['.###.', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
+  B: ['####.', '#...#', '#...#', '####.', '#...#', '#...#', '####.'],
+  C: ['.####', '#....', '#....', '#....', '#....', '#....', '.####'],
+  D: ['####.', '#...#', '#...#', '#...#', '#...#', '#...#', '####.'],
+  E: ['#####', '#....', '#....', '####.', '#....', '#....', '#####'],
+  F: ['#####', '#....', '#....', '####.', '#....', '#....', '#....'],
+  G: ['.####', '#....', '#....', '#.###', '#...#', '#...#', '.###.'],
+  H: ['#...#', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
+  I: ['#####', '..#..', '..#..', '..#..', '..#..', '..#..', '#####'],
+  J: ['..###', '...#.', '...#.', '...#.', '...#.', '#..#.', '.##..'],
+  K: ['#...#', '#..#.', '#.#..', '##...', '#.#..', '#..#.', '#...#'],
+  L: ['#....', '#....', '#....', '#....', '#....', '#....', '#####'],
+  M: ['#...#', '##.##', '#.#.#', '#.#.#', '#...#', '#...#', '#...#'],
+  N: ['#...#', '##..#', '#.#.#', '#..##', '#...#', '#...#', '#...#'],
+  O: ['.###.', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
+  P: ['####.', '#...#', '#...#', '####.', '#....', '#....', '#....'],
+  Q: ['.###.', '#...#', '#...#', '#...#', '#.#.#', '#..#.', '.##.#'],
+  R: ['####.', '#...#', '#...#', '####.', '#.#..', '#..#.', '#...#'],
+  S: ['.####', '#....', '#....', '.###.', '....#', '....#', '####.'],
+  T: ['#####', '..#..', '..#..', '..#..', '..#..', '..#..', '..#..'],
+  U: ['#...#', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
+  V: ['#...#', '#...#', '#...#', '#...#', '#...#', '.#.#.', '..#..'],
+  W: ['#...#', '#...#', '#...#', '#.#.#', '#.#.#', '##.##', '#...#'],
+  X: ['#...#', '#...#', '.#.#.', '..#..', '.#.#.', '#...#', '#...#'],
+  Y: ['#...#', '#...#', '.#.#.', '..#..', '..#..', '..#..', '..#..'],
+  Z: ['#####', '....#', '...#.', '..#..', '.#...', '#....', '#####'],
+};
+
+/**
+ * Draws the vanilla-logo-style pixel wordmark into `canvas`: noisy light-gray
+ * stone face, darker 3D extrusion running down-right, thin black outline.
+ * The canvas is sized to fit and meant to be scaled up with
+ * `image-rendering: pixelated`.
+ */
+function drawLogo(canvas: HTMLCanvasElement, text: string): void {
+  const CELL = 9; // canvas px per font pixel
+  const EXT = 6; // 3D extrusion offset, down-right
+  const RIM = 2; // black outline thickness
+  const GW = 5;
+  const GH = 7;
+  const cols = text.length * (GW + 1) - 1;
+  const w = RIM + cols * CELL + EXT + RIM;
+  const h = RIM + GH * CELL + EXT + RIM;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d')!;
+
+  // Rasterize the glyph mask at canvas resolution.
+  const face = new Uint8Array(w * h);
+  for (let i = 0; i < text.length; i++) {
+    const glyph = LOGO_GLYPHS[text[i]];
+    if (!glyph) continue;
+    for (let gy = 0; gy < GH; gy++) {
+      for (let gx = 0; gx < GW; gx++) {
+        if (glyph[gy][gx] !== '#') continue;
+        const x0 = RIM + (i * (GW + 1) + gx) * CELL;
+        const y0 = RIM + gy * CELL;
+        for (let y = y0; y < y0 + CELL; y++) face.fill(1, y * w + x0, y * w + x0 + CELL);
+      }
+    }
+  }
+
+  // For every empty pixel, distance (1..EXT) diagonally up-left to a face
+  // pixel — that is the extruded side of the letters.
+  const depth = new Int8Array(w * h).fill(-1);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (face[y * w + x]) continue;
+      for (let k = 1; k <= EXT; k++) {
+        if (x - k >= 0 && y - k >= 0 && face[(y - k) * w + (x - k)]) {
+          depth[y * w + x] = k;
+          break;
+        }
+      }
+    }
+  }
+
+  const solidAt = (x: number, y: number): boolean =>
+    x >= 0 && y >= 0 && x < w && y < h && (face[y * w + x] === 1 || depth[y * w + x] > 0);
+
+  const rng = makeRng(0x106005);
+  const img = ctx.createImageData(w, h);
+  const d = img.data;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (face[y * w + x]) {
+        // Stone face: light gray noise, chiseled lighter top / darker bottom.
+        let v = 196 + rng() * 42;
+        if (rng() < 0.09) v -= 48;
+        if (!face[(y - 1) * w + x]) v += 26;
+        if (!face[(y + 1) * w + x]) v -= 30;
+        v = Math.max(120, Math.min(255, v));
+        d[i] = d[i + 1] = d[i + 2] = v;
+        d[i + 3] = 255;
+      } else if (depth[y * w + x] > 0) {
+        // Extrusion: dark gray, fading slightly with depth.
+        const v = 74 - depth[y * w + x] * 4 + rng() * 14;
+        d[i] = d[i + 1] = d[i + 2] = v;
+        d[i + 3] = 255;
+      } else {
+        // Thin black outline hugging the extruded block.
+        let near = false;
+        for (let dy = -RIM; dy <= RIM && !near; dy++) {
+          for (let dx = -RIM; dx <= RIM && !near; dx++) {
+            if ((dx !== 0 || dy !== 0) && solidAt(x + dx, y + dy)) near = true;
+          }
+        }
+        if (near) d[i + 3] = 255;
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
 /** All full-screen menus: title, world select/create, options, pause, controls, death. */
 export class Menus {
   current: MenuId = 'title';
@@ -73,6 +252,11 @@ export class Menus {
   constructor(hooks: MenuHooks, options: Options) {
     this.hooks = hooks;
     this.options = options;
+    // Bake UI art synchronously so buttons never flash unstyled.
+    const btn = buildButtonTextures();
+    document.documentElement.style.setProperty('--btn-url', `url(${btn.base})`);
+    document.documentElement.style.setProperty('--btn-hover-url', `url(${btn.hover})`);
+    drawLogo(document.getElementById('logo-canvas') as HTMLCanvasElement, 'WEBCRAFT');
     this.wireTitle();
     this.wireWorlds();
     this.wireCreate();
@@ -122,6 +306,10 @@ export class Menus {
     this.click('btn-title-options', () => {
       this.optionsFrom = 'title';
       this.show('options');
+    });
+    this.click('btn-title-controls', () => {
+      this.controlsFrom = 'title';
+      this.show('controls');
     });
   }
 

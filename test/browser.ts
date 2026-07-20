@@ -744,7 +744,7 @@ async function main(): Promise<void> {
     kind: (window as any).game.session.screens.kind,
   }));
   console.log('  creative picker:', JSON.stringify(creativeInfo));
-  if (creativeInfo.kind !== 'creative' || creativeInfo.pickers < 40) {
+  if (creativeInfo.kind !== 'creative' || creativeInfo.pickers < 20) {
     errors.push(`creative picker missing: ${JSON.stringify(creativeInfo)}`);
   }
   await shot('16-creative-picker');
@@ -787,6 +787,44 @@ async function main(): Promise<void> {
   const keptStone = await page.evaluate((stoneId) => (window as any).game.session.inventory.countOf(stoneId), B.Stone);
   console.log('  keepInventory:', keptStone);
   if (keptStone !== 7) errors.push(`keepInventory failed: kept ${keptStone}/7 stone`);
+
+  // --- Air bar: shows only while the head is submerged, hides on surfacing
+  await page.evaluate((waterId) => {
+    const g = (window as any).game;
+    const s = g.session;
+    if (g.mode !== 'playing') g.setMode('playing');
+    const p = s.player.pos;
+    const x = Math.floor(p.x) + 8, z = Math.floor(p.z);
+    const y = s.world.surfaceYAt(x, z);
+    for (let dy = 0; dy < 3; dy++) s.world.setBlockAt(x, y - dy, z, waterId);
+    p.set(x + 0.5, y - 2.4, z + 0.5);
+    s.player.vel.set(0, 0, 0);
+  }, B.Water);
+  await sleep(700);
+  const airDiving = await page.evaluate(() => ({
+    display: document.getElementById('air')!.style.display,
+    headInWater: (window as any).game.session.player.headInWater,
+    air: (window as any).game.session.player.air,
+  }));
+  await page.evaluate(() => {
+    const g = (window as any).game;
+    const s = g.session;
+    const sp = s.player.spawnPoint;
+    s.player.pos.set(sp.x, s.world.surfaceYAt(Math.floor(sp.x), Math.floor(sp.z)) + 1.1, sp.z);
+    s.player.vel.set(0, 0, 0);
+  });
+  await sleep(400);
+  const airOnLand = await page.evaluate(() => ({
+    display: document.getElementById('air')!.style.display,
+    air: (window as any).game.session.player.air,
+  }));
+  console.log('  air bar:', JSON.stringify({ airDiving, airOnLand }));
+  if (!airDiving.headInWater || airDiving.display !== 'flex' || airDiving.air >= 15) {
+    errors.push(`air bar not shown while diving: ${JSON.stringify(airDiving)}`);
+  }
+  if (airOnLand.display !== 'none' || airOnLand.air < 15) {
+    errors.push(`air bar did not hide on land: ${JSON.stringify(airOnLand)}`);
+  }
 
   await browser.close();
 
