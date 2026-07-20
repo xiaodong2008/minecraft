@@ -172,7 +172,7 @@ export function itemDef(id: number): ItemDef {
 
 export function maxDurability(id: number): number {
   const def = itemDef(id);
-  return def.tool?.durability ?? def.armor?.durability ?? 0;
+  return def.tool?.durability ?? def.armor?.durability ?? def.durability ?? 0;
 }
 
 export function fuelTime(id: number): number {

@@ -1,4 +1,4 @@
-import { ItemStack, canStack, itemDef } from './items';
+import { ItemStack, canStack, itemDef, maxDurability } from './items';
 
 export const HOTBAR_SIZE = 9;
 export const INV_SIZE = 36; // 0..8 hotbar, 9..35 main
@@ -100,7 +100,7 @@ export class Inventory {
     const s = this.held();
     if (!s) return false;
     const def = itemDef(s.id);
-    const maxDur = def.tool?.durability ?? 0;
+    const maxDur = def.tool?.durability ?? def.durability ?? 0;
     if (maxDur <= 0) return false;
     s.dur = (s.dur ?? 0) + amount;
     this.changed();
