@@ -862,12 +862,18 @@ async function main(): Promise<void> {
   await shot('18-rain');
   await runChat('/weather clear');
 
-  // --- Save & reload: quit to title, load the same world from the list
+  // --- Save & reload: quit to title, load the same world from the list.
+  // The player is moved far from the origin first: reloading must warm up
+  // chunks around the SAVED position, not the default one (regression: the
+  // loading bar used to seesaw forever because frame() streamed around the
+  // stale origin and kept unloading the warm-up's chunks).
   await page.evaluate((stoneId) => {
     const g = (window as any).game;
     const s = g.session;
     s.inventory.clear();
     s.inventory.add(stoneId, 42);
+    s.player.pos.set(700, 90, -520);
+    s.player.vel.set(0, 0, 0);
     g.quitToTitle();
   }, B.Stone);
   await sleep(600);
@@ -882,24 +888,37 @@ async function main(): Promise<void> {
   await sleep(300);
   await page.click('#world-list .world-row');
   await sleep(200);
+  const reloadT0 = Date.now();
   await page.click('#btn-world-play');
   try {
-    await page.waitForSelector('#menu-pause:not(.hidden)', { timeout: 60_000 });
+    await page.waitForSelector('#menu-pause:not(.hidden)', { timeout: 40_000 });
   } catch {
     errors.push('reloading the saved world never reached the pause menu (stuck loading)');
   }
+  const reloadMs = Date.now() - reloadT0;
   await sleep(300);
   const reloaded = await page.evaluate((stoneId) => {
     const g = (window as any).game;
+    const s = g.session;
     return {
       mode: g.mode,
-      stone: g.session?.inventory.countOf(stoneId) ?? -1,
-      chunks: g.session?.world.chunkCount() ?? 0,
+      stone: s?.inventory.countOf(stoneId) ?? -1,
+      chunks: s?.world.chunkCount() ?? 0,
+      px: s?.player.pos.x ?? 0,
+      progress: s ? s.world.loadProgress(s.player.pos.x, s.player.pos.z) : 0,
     };
   }, B.Stone);
-  console.log('  save/reload:', JSON.stringify(reloaded));
+  console.log('  save/reload:', JSON.stringify({ ...reloaded, reloadMs }));
   if (reloaded.mode !== 'paused' || reloaded.stone !== 42 || reloaded.chunks < 25) {
     errors.push(`saved world reload failed: ${JSON.stringify(reloaded)}`);
+  }
+  if (Math.abs(reloaded.px - 700) > 1) {
+    errors.push(`reload lost the far player position: ${JSON.stringify(reloaded)}`);
+  }
+  // With the tug-of-war bug this either times out (45s cap) or comes back
+  // half-loaded; a healthy warm-up around the saved position is fast + full.
+  if (reloadMs > 35_000 || reloaded.progress < 0.95) {
+    errors.push(`reload warm-up unhealthy: ${JSON.stringify({ reloadMs, progress: reloaded.progress })}`);
   }
   await shot('17-reloaded-world');
 

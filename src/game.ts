@@ -200,6 +200,7 @@ export class Game {
       this.els.loading.classList.add('hidden');
       this.setMode('title');
       this.menus.show('title');
+      window.alert(`World load failed:\n${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -294,6 +295,10 @@ export class Game {
     // Warm up chunks around the spawn/saved position with a progress bar.
     const px = save.player?.x ?? SPAWN_X;
     const pz = save.player?.z ?? SPAWN_Z;
+    // Pre-position the player: frame() streams chunks around player.pos while
+    // this loop awaits rAF — a stale default position would make its periodic
+    // unloadFar discard everything generated here (loading bar tug-of-war).
+    player.pos.set(px, save.player?.y ?? 80, pz);
     const t0 = performance.now();
     for (;;) {
       world.update(px, pz, 30);
@@ -716,7 +721,11 @@ export class Game {
     }
 
     // Stream chunks around the player (bigger budget while paused/menu).
-    s.world.update(s.player.pos.x, s.player.pos.z, this.mode === 'playing' ? 6 : 12);
+    // Not while loading: buildSession owns chunk streaming until the world is
+    // ready, and double-driving update() would fight its unloadFar radius.
+    if (this.mode !== 'loading') {
+      s.world.update(s.player.pos.x, s.player.pos.z, this.mode === 'playing' ? 6 : 12);
+    }
 
     const eye = s.player.eyePosition();
     const headBlock = s.world.getBlockAt(Math.floor(eye.x), Math.floor(eye.y), Math.floor(eye.z));
