@@ -10,7 +10,52 @@ interface TreeInfo {
   kind: 'oak' | 'cactus';
 }
 
+/**
+ * Continuous climate sample for one column. The factors are 0..1 ramps over a
+ * narrow band around each biome threshold; >= 0.5 means the column is inside
+ * that biome, values strictly between 0 and 1 mark the transition band where
+ * the surface is dithered between the two materials.
+ */
+interface Climate {
+  temp: number;
+  moist: number;
+  snow: number;
+  desert: number;
+  forest: number;
+}
+
 const TREE_MARGIN = 3; // max canopy overhang, checked around chunk borders
+
+// --- climate tuning ---
+// Temperature and moisture are single-octave and VERY low frequency so biome
+// regions span several hundred to a couple thousand blocks. Gentle domain
+// warping makes borders meander organically instead of forming round blobs.
+const TEMP_FREQ = 0.0006; // wavelength ~1650 blocks
+const MOIST_FREQ = 0.00068; // wavelength ~1470 blocks
+const WARP_FREQ = 0.0006;
+const WARP_AMP = 120; // blocks of border meander
+
+// Biome thresholds in climate space (factor 0.5 = biome border). BAND is the
+// half-width of the transition ramp: 0.02 in climate units is roughly a
+// 20-40 block dither band on the ground at these noise frequencies. The moist
+// gap between desert (< 0.02) and forest (> 0.14) keeps a wide plains strip
+// between them so deserts never touch forests directly.
+const SNOW_TEMP = 0.34; // snow when temp < -0.34
+const DESERT_TEMP = 0.3; // desert when temp > 0.30 ...
+const DESERT_MOIST = 0.0; // ... and moist < 0
+const FOREST_MOIST = 0.16; // forest when moist > 0.16
+const BAND = 0.02;
+
+/**
+ * Mountain tops at/above this height get a snow surface block in any biome
+ * (surface dressing only — not a biome flip). Regular hills top out at 89, so
+ * only real mountains qualify and there are no isolated snow pinpricks.
+ */
+const SNOWCAP_Y = 90;
+
+function ramp01(v: number, lo: number, hi: number): number {
+  return v <= lo ? 0 : v >= hi ? 1 : (v - lo) / (hi - lo);
+}
 
 export class Terrain {
   readonly seed: number;
@@ -21,6 +66,8 @@ export class Terrain {
   private readonly mountainMaskNoise: Simplex2;
   private readonly tempNoise: Simplex2;
   private readonly moistNoise: Simplex2;
+  private readonly warpXNoise: Simplex2;
+  private readonly warpZNoise: Simplex2;
   private readonly caveNoiseA: Simplex3;
   private readonly caveNoiseB: Simplex3;
   private readonly oreNoiseA: Simplex3;
@@ -36,6 +83,8 @@ export class Terrain {
     this.mountainMaskNoise = new Simplex2(this.seed ^ 0x9c0d);
     this.tempNoise = new Simplex2(this.seed ^ 0xbead);
     this.moistNoise = new Simplex2(this.seed ^ 0xdead);
+    this.warpXNoise = new Simplex2(this.seed ^ 0x6f77);
+    this.warpZNoise = new Simplex2(this.seed ^ 0x8e99);
     this.caveNoiseA = new Simplex3(this.seed ^ 0x1111);
     this.caveNoiseB = new Simplex3(this.seed ^ 0x2222);
     this.oreNoiseA = new Simplex3(this.seed ^ 0x3333);
@@ -43,13 +92,44 @@ export class Terrain {
     this.oreNoiseC = new Simplex3(this.seed ^ 0x5555);
   }
 
+  /** Low-frequency, domain-warped climate at a column. Pure and deterministic. */
+  private climateAt(x: number, z: number): Climate {
+    const wx = x + this.warpXNoise.noise(x * WARP_FREQ, z * WARP_FREQ) * WARP_AMP;
+    const wz = z + this.warpZNoise.noise(x * WARP_FREQ, z * WARP_FREQ) * WARP_AMP;
+    const temp = this.tempNoise.noise(wx * TEMP_FREQ, wz * TEMP_FREQ);
+    const moist = this.moistNoise.noise(wx * MOIST_FREQ, wz * MOIST_FREQ);
+    const snow = ramp01(-temp, SNOW_TEMP - BAND, SNOW_TEMP + BAND);
+    const desert = Math.min(
+      ramp01(temp, DESERT_TEMP - BAND, DESERT_TEMP + BAND),
+      ramp01(-moist, -DESERT_MOIST - BAND, -DESERT_MOIST + BAND),
+    );
+    const forest = ramp01(moist, FOREST_MOIST - BAND, FOREST_MOIST + BAND);
+    return { temp, moist, snow, desert, forest };
+  }
+
+  /** Discrete biome from climate factors only (height plays no part). */
+  private biomeOf(c: Climate): Biome {
+    if (c.snow >= 0.5) return 'snow';
+    if (c.desert >= 0.5) return 'desert';
+    if (c.forest >= 0.5) return 'forest';
+    return 'plains';
+  }
+
   /** Terrain surface height (top solid block y) at world column (x, z). Deterministic. */
   heightAt(x: number, z: number): number {
+    return this.heightWithClimate(x, z, this.climateAt(x, z));
+  }
+
+  private heightWithClimate(x: number, z: number, c: Climate): number {
     const continent = this.continentNoise.fbm(x * 0.0016, z * 0.0016, 3); // large land masses
     const hills = this.hillNoise.fbm(x * 0.008, z * 0.008, 4);
     const detail = this.detailNoise.noise(x * 0.045, z * 0.045);
 
-    let h = SEA_LEVEL + 2 + continent * 14 + hills * 9 + detail * 2;
+    // Climate shapes the rolling hills using the continuous factors, so the
+    // relief changes gradually across biome borders (no cliffs at the seam):
+    // deserts flatten out, plains stay gentle, forests roll the most.
+    const hillAmp = 9 * (1 - 0.4 * c.desert) * (0.85 + 0.15 * c.forest);
+    let h = SEA_LEVEL + 2 + continent * 14 + hills * hillAmp + detail * 2;
 
     // Ridged mountains, only inside a mask so plains stay flat.
     const mask = this.mountainMaskNoise.noise(x * 0.0011, z * 0.0011);
@@ -62,30 +142,45 @@ export class Terrain {
   }
 
   biomeAt(x: number, z: number): Biome {
-    const temp = this.tempNoise.fbm(x * 0.0021, z * 0.0021, 2);
-    const moist = this.moistNoise.fbm(x * 0.0025, z * 0.0025, 2);
-    const h = this.heightAt(x, z);
-    if (h > 86 || temp < -0.42) return 'snow';
-    if (temp > 0.34 && moist < 0.12 && h < 80) return 'desert';
-    if (moist > 0.05) return 'forest';
-    return 'plains';
+    return this.biomeOf(this.climateAt(x, z));
+  }
+
+  /**
+   * Surface block for a column: snowcaps on high mountains, otherwise the
+   * climate factors dithered by hash so desert->grass and snow->grass edges
+   * fade over the transition band instead of forming a hard line.
+   */
+  private surfaceFor(x: number, z: number, c: Climate, h: number): number {
+    if (h >= SNOWCAP_Y) return B.Snow;
+    const r = hash2(x, z, this.seed ^ 0xd17e);
+    if (c.snow > r) return B.Snow;
+    if (c.desert > r) return B.Sand;
+    return B.Grass;
   }
 
   /** Deterministic tree/cactus placement so canopies can cross chunk borders. */
   treeAt(x: number, z: number): TreeInfo | null {
     const r = hash2(x, z, this.seed ^ 0x51ee);
-    if (r >= 0.022) return null; // cheap early-out before biome noise
+    if (r >= 0.025) return null; // cheap early-out before any noise
 
-    const h = this.heightAt(x, z);
+    const c = this.climateAt(x, z);
+    const h = this.heightWithClimate(x, z, c);
     if (h <= SEA_LEVEL) return null;
-    const biome = this.biomeAt(x, z);
 
-    const chance = biome === 'forest' ? 0.02 : biome === 'plains' ? 0.003 : biome === 'snow' ? 0.006 : 0.004;
-    if (r >= chance) return null;
-
-    if (biome === 'desert') {
+    if (this.biomeOf(c) === 'desert') {
+      // Cacti only deep inside the desert (never on the dithered grass of the
+      // transition band) and never on snowcapped peaks.
+      if (c.desert < 1 || h >= SNOWCAP_Y || r >= 0.005) return null;
       return { kind: 'cactus', trunkHeight: 1 + Math.floor(hash2(x, z, this.seed ^ 0x77aa) * 3) };
     }
+
+    // Oak density follows the continuous moisture: dense in deep forest,
+    // sparse at the forest edge, rare lone oaks on plains; snow stays sparse.
+    const oakChance = 0.003 + 0.021 * ramp01(c.moist, FOREST_MOIST - BAND, 0.45);
+    const chance = oakChance + (0.005 - oakChance) * c.snow;
+    if (r >= chance) return null;
+    // Keep trees off the sandy patches inside a desert transition band.
+    if (this.surfaceFor(x, z, c, h) === B.Sand) return null;
     return { kind: 'oak', trunkHeight: 4 + Math.floor(hash2(x, z, this.seed ^ 0x77aa) * 3) };
   }
 
@@ -100,8 +195,10 @@ export class Terrain {
       for (let lz = 0; lz < CHUNK_SIZE; lz++) {
         const wx = baseX + lx;
         const wz = baseZ + lz;
-        const h = this.heightAt(wx, wz);
-        const biome = this.biomeAt(wx, wz);
+        // Climate is computed once per column and shared by height + surface.
+        const climate = this.climateAt(wx, wz);
+        const h = this.heightWithClimate(wx, wz, climate);
+        const surface = this.surfaceFor(wx, wz, climate, h);
         const colBase = chunkIndex(lx, 0, lz);
 
         const bedrockDepth = hash2(wx, wz, this.seed ^ 0xbed) < 0.4 ? 2 : 1;
@@ -118,9 +215,10 @@ export class Terrain {
               id = hash2(wx ^ y, wz, this.seed ^ 0xf10) < 0.35 ? B.Gravel : B.Sand;
             }
           } else if (y === h) {
-            id = biome === 'desert' ? B.Sand : biome === 'snow' ? B.Snow : B.Grass;
+            id = surface;
           } else if (y > h - 4) {
-            id = biome === 'desert' ? (y > h - 3 ? B.Sand : B.Sandstone) : B.Dirt;
+            // Subsurface follows the dithered surface choice.
+            id = surface === B.Sand ? (y > h - 3 ? B.Sand : B.Sandstone) : B.Dirt;
           } else {
             id = B.Stone;
           }

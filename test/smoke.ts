@@ -52,6 +52,28 @@ check('surface block is solid', isSolid(world.getBlockAt(spawn.x, sy, spawn.z)))
 check('above surface is not solid', !isSolid(world.getBlockAt(spawn.x, sy + 1, spawn.z)));
 check('bedrock at y=0', world.getBlockAt(spawn.x, 0, spawn.z) === B.Bedrock);
 
+// --- biome coherence: regions must be large, no confetti biomes ---
+{
+  const terrain = world.terrain;
+  // Along a long transect, biome changes should be rare (large regions)...
+  let changes = 0;
+  let prev = terrain.biomeAt(-4000, 1234);
+  for (let x = -4000 + 8; x <= 4000; x += 8) {
+    const b = terrain.biomeAt(x, 1234);
+    if (b !== prev) changes++;
+    prev = b;
+  }
+  check('biome regions are large (few changes over 8km)', changes <= 25, `got ${changes} changes`);
+  // ...and deterministic.
+  check('biomeAt deterministic', terrain.biomeAt(321, -654) === terrain.biomeAt(321, -654));
+  // Height continuity: no cliffs between adjacent columns on ordinary terrain.
+  let maxStep = 0;
+  for (let x = -800; x < 800; x++) {
+    maxStep = Math.max(maxStep, Math.abs(terrain.heightAt(x, 77) - terrain.heightAt(x + 1, 77)));
+  }
+  check('height is continuous (max step <= 6 incl mountains)', maxStep <= 6, `got ${maxStep}`);
+}
+
 // --- sky light ---
 const skyAbove = world.getSkyAt(spawn.x, sy + 1, spawn.z);
 check('sky light above dry surface is 15', skyAbove === 15, `got ${skyAbove}`);
@@ -83,8 +105,8 @@ check('light removed with torch', world.getBlockLightAt(px, cellY, pz) === 0);
 world.setBlockAt(px, cellY + 1, pz, B.Air);
 check('sunlight returns through opened roof', world.getSkyAt(px, cellY, pz) === 15);
 
-// --- raycast ---
-const origin = new THREE.Vector3(8.5, world.surfaceYAt(8, 8) + 1.6, 8.5);
+// --- raycast --- (from the spawn column, which is guaranteed to have clear air above)
+const origin = new THREE.Vector3(spawn.x + 0.5, world.surfaceYAt(spawn.x, spawn.z) + 1.6, spawn.z + 0.5);
 const hit = world.raycast(origin, new THREE.Vector3(0, -1, 0), 6);
 check('downward raycast hits ground', !!hit && hit.ny === 1);
 
